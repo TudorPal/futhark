@@ -14,105 +14,120 @@ import Futhark.Analysis.Properties.Unify (renameSame, unify)
 import Futhark.Compiler.CLI (fileProg, readProgramOrDie)
 import Futhark.MonadFreshNames (newNameFromString)
 import Futhark.SoP.SoP (int2SoP, sym2SoP, (.*.), (.+.), (.-.))
-import Futhark.Util.Pretty (docStringW, line, pretty, (<+>))
+import Futhark.Util.Pretty (Pretty, docStringW, line, pretty, (<+>))
 import Language.Futhark qualified as E
 import Test.Tasty
 import Test.Tasty.HUnit
+
+(@??=) :: (Eq a, Pretty a) => a -> a -> IO ()
+actual @??= expected =
+  unless (actual == expected) (assertFailure msg)
+  where
+    msg =
+      docStringW 120 $
+        "expected:" <+> pretty expected <> line <> "but got: " <+> pretty actual
 
 tests :: TestTree
 tests =
   testGroup "Properties.IndexFn"
     [ programTests
-    --, propFlattenTests
+    , propFlattenTests
     ]
 
--- propFlattenTests :: TestTree
--- propFlattenTests =
---   testGroup "PropFlatten"
---     [ testCase "rectangular i1 := i2*e3 + i3" $ do
---         -- We just need a VNameSource to run IndexFnM. Any existing .fut is fine.
---         (_, _, vns) <- readProgramOrDie "tests/indexfn/map.fut"
---         let (actual, expected, i1) =
---               fst $ flip runIndexFnM vns $ do
---                 i1 <- newNameFromString "i1"
---                 i2 <- newNameFromString "i2"
---                 i3 <- newNameFromString "i3"
---                 n  <- newNameFromString "n"
---                 m  <- newNameFromString "m"
+propFlattenTests :: TestTree
+propFlattenTests =
+  testGroup "PropFlatten"
+    [ testCase "rectangular i1 := i2*e3 + i3" $ do
+        -- We just need a VNameSource to run IndexFnM. Any existing .fut is fine.
+        (_, _, vns) <- readProgramOrDie "tests/indexfn/map.fut"
+        let (mg', expected, _i1) =
+              fst $ flip runIndexFnM vns $ do
+                i1 <- newNameFromString "i1"
+                i2 <- newNameFromString "i2"
+                i3 <- newNameFromString "i3"
+                n  <- newNameFromString "n"
+                m  <- newNameFromString "m"
 
---                 let e2 = sym2SoP (Var n)
---                 let e3 = sym2SoP (Var m)
---                 let e1 = e2 .*. e3
+                let e2 = sym2SoP (Var n) -- 
+                let e3 = sym2SoP (Var m)
+                let e1 = e2 .*. e3
 
---                 let g =
---                       IndexFn
---                         { shape = [[Forall i1 (Iota e1)]]
---                         , body  = cases [(Bool True, sym2SoP (Var i1))]
---                         }
+                let g =
+                      IndexFn
+                        { shape = [[Forall i1 (Iota e1)]]
+                        , body  = cases [(Bool True, sym2SoP (Var i1))]
+                        }
 
---                 let f =
---                       IndexFn
---                         { shape = [[Forall i2 (Iota e2), Forall i3 (Iota e3)]]
---                         , body  = cases [(Bool True, sym2SoP (Var i3))]
---                         }
+                let f =
+                      IndexFn
+                        { shape = [[Forall i2 (Iota e2), Forall i3 (Iota e3)]]
+                        , body  = cases [(Bool True, sym2SoP (Var i3))]
+                        }
 
---                 Just g' <- propFlattenOnce 0 g f
+                mg' <- propFlattenOnce 0 g f
 
---                 eRow <- rewrite (sym2SoP (Var i2) .*. e3)
---                 let expected =
---                       IndexFn
---                         { shape = [[Forall i2 (Iota e2), Forall i3 (Iota e3)]]
---                         , body  = cases [(Bool True, eRow .+. sym2SoP (Var i3))]
---                         }
+                let eRow = sym2SoP (Var i2) .*. e3
 
---                 pure (g', expected, i1)
+                let expected =
+                      IndexFn
+                        { shape = [[Forall i2 (Iota e2), Forall i3 (Iota e3)]]
+                        , body  = cases [(Bool True, eRow .+. sym2SoP (Var i3))]
+                        }
 
---         actual @??= expected
---         assertBool "i1 eliminated from body" (i1 `S.notMember` fv (body actual))
+                pure (mg', expected, i1)
 
---     , testCase "segmented i1 := e[i2] + i3 (e3 == e[i2+1]-e[i2])" $ do
---         (_, _, vns) <- readProgramOrDie "tests/indexfn/map.fut"
---         let (actual, expected, i1) =
---               fst $ flip runIndexFnM vns $ do
---                 i1 <- newNameFromString "i1"
---                 i2 <- newNameFromString "i2"
---                 i3 <- newNameFromString "i3"
---                 m  <- newNameFromString "m"
---                 e  <- newNameFromString "e"
+        actual <- case mg' of
+          Nothing -> assertFailure "propFlattenOnce did not apply (got Nothing)" >> error "unreachable"
+          Just g' -> pure g'
 
---                 let e2 = sym2SoP (Var m)
---                 let i2S = sym2SoP (Var i2)
+        actual @??= expected
 
---                 let eAt t = sym2SoP (Apply (Var e) [t])
+    , testCase "segmented i1 := e[i2] + i3 (e3 == e[i2+1]-e[i2])" $ do
+        (_, _, vns) <- readProgramOrDie "tests/indexfn/map.fut"
+        let (mg', expected, _i1) =
+              fst $ flip runIndexFnM vns $ do
+                i1 <- newNameFromString "i1"
+                i2 <- newNameFromString "i2"
+                i3 <- newNameFromString "i3"
+                m  <- newNameFromString "m"
+                e  <- newNameFromString "e"
 
---                 let e3 = eAt (i2S .+. int2SoP 1) .-. eAt i2S
---                 let e1 = eAt e2
+                let e2 = sym2SoP (Var m)
+                let i2S = sym2SoP (Var i2)
 
---                 let g =
---                       IndexFn
---                         { shape = [[Forall i1 (Iota e1)]]
---                         , body  = cases [(Bool True, sym2SoP (Var i1))]
---                         }
+                let eAt t = sym2SoP (Apply (Var e) [t])
 
---                 let f =
---                       IndexFn
---                         { shape = [[Forall i2 (Iota e2), Forall i3 (Iota e3)]]
---                         , body  = cases [(Bool True, sym2SoP (Var i3))]
---                         }
+                let e3 = eAt (i2S .+. int2SoP 1) .-. eAt i2S
+                let e1 = eAt e2
 
---                 Just g' <- propFlattenOnce 0 g f
+                let g =
+                      IndexFn
+                        { shape = [[Forall i1 (Iota e1)]]
+                        , body  = cases [(Bool True, sym2SoP (Var i1))]
+                        }
 
---                 let expected =
---                       IndexFn
---                         { shape = [[Forall i2 (Iota e2), Forall i3 (Iota e3)]]
---                         , body  = cases [(Bool True, eAt i2S .+. sym2SoP (Var i3))]
---                         }
+                let f =
+                      IndexFn
+                        { shape = [[Forall i2 (Iota e2), Forall i3 (Iota e3)]]
+                        , body  = cases [(Bool True, sym2SoP (Var i3))]
+                        }
 
---                 pure (g', expected, i1)
+                mg' <- propFlattenOnce 0 g f
 
---         actual @??= expected
---         assertBool "i1 eliminated from body" (i1 `S.notMember` fv (body actual))
---     ]
+                let expected =
+                      IndexFn
+                        { shape = [[Forall i2 (Iota e2), Forall i3 (Iota e3)]]
+                        , body  = cases [(Bool True, eAt i2S .+. sym2SoP (Var i3))]
+                        }
+
+                pure (mg', expected, i1)
+
+        actual <- case mg' of
+          Nothing -> assertFailure "propFlattenOnce did not apply (got Nothing)" >> error "unreachable"
+          Just g' -> pure g'
+
+        actual @??= expected
+    ]
 
 programTests :: TestTree
 programTests =
@@ -934,8 +949,8 @@ programTests =
 
     sVar = sym2SoP . Var
 
-    actual @??= expected = unless (actual == expected) (assertFailure msg)
-      where
-        msg = do
-          docStringW 120 $
-            "expected:" <+> pretty expected <> line <> "but got: " <+> pretty actual
+    -- actual @??= expected = unless (actual == expected) (assertFailure msg)
+    --   where
+    --     msg = do
+    --       docStringW 120 $
+    --         "expected:" <+> pretty expected <> line <> "but got: " <+> pretty actual
