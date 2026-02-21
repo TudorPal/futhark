@@ -53,12 +53,77 @@ tests =
 catRefactorTests :: TestTree
 catRefactorTests =
   testGroup "CatRefactor"
-    [ scatterSc2RuleTest
+    [ scatterSc2RuleTest AllowCat
     ]
+
+scatterSc2RuleTest :: CatExpectation -> TestTree
+scatterSc2RuleTest expect =
+  testCase "Convert.scatterSc2 migration (direct rule)" $ do
+    -- We just need a VNameSource to run IndexFnM. Any existing .fut is fine.
+    (_, _, vns) <- readProgramOrDie "tests/indexfn/map.fut"
+
+    let mf =
+          fst $ flip runIndexFnM vns $ do
+            -- size variable m (scalar)
+            m <- newNameFromString "m"
+
+            -- iterator names
+            i <- newNameFromString "i"
+            k <- newNameFromString "k"
+
+            let mS = sym2SoP (Var m)
+
+            -- xs : [0..m-1] -> i  (simple base array)
+            let xs =
+                  IndexFn
+                    { shape = [[Forall i (Iota mS)]]
+                    , body  = cases [(Bool True, sym2SoP (Var i))]
+                    }
+
+            -- vs : [0..m-1] -> k  (simple values array)
+            let vs =
+                  IndexFn
+                    { shape = [[Forall k (Iota mS)]]
+                    , body  = cases [(Bool True, sym2SoP (Var k))]
+                    }
+
+            -- is : shape [[k : Iota m]]
+            --
+            -- Two branches crafted to match scatterSc2's expected sorting:
+            --   - Unknown for in-domain check: expression m (cannot prove m < m)
+            --   - Yes for in-domain check: expression k (k is provably in [0,m))
+            --
+            -- The in-bounds branch uses e = k, which satisfies the monotonic
+            -- boundary checks inside scatterSc2 (e[0]=0, e[m]=m, monotone).
+            let is =
+                  IndexFn
+                    { shape = [[Forall k (Iota mS)]]
+                    , body =
+                        cases
+                          [ (Bool True, sym2SoP (Var m)) -- OOB-ish => Unknown in_dom_xs
+                          , (Bool True, sym2SoP (Var k)) -- in-bounds => Yes in_dom_xs
+                          ]
+                    }
+
+            tryScatterSc2 xs is vs
+
+    f <- case mf of
+      Nothing -> assertFailure "tryScatterSc2 returned Nothing (scatterSc2 did not match)." >> error "unreachable"
+      Just f  -> pure f
+
+    case expect of
+      AllowCat ->
+        assertBool
+          "Expected Cat encoding OR a flattened dimension encoding"
+          (hasCat f || hasFlattenedDim f)
+      NoCat -> do
+        assertBool "Expected no Cat domains" (not (hasCat f))
+        assertBool "Expected a flattened dimension encoding" (hasFlattenedDim f)
+
 
 catRefactorTestsFile :: TestTree
 catRefactorTestsFile =
-  testGroup "CatRefactor"
+  testGroup "CatRefactorFile"
     [ mkCatMigrationTest AllowCat "tests/indexfn/scatter_sc2.fut"
     ]
   where
