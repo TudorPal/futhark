@@ -2,6 +2,8 @@ module Futhark.Analysis.Properties.IndexFnTests (tests) where
 
 import Control.Monad (forM, forM_, unless, when)
 import Data.Maybe (mapMaybe)
+import qualified Data.Set as S
+import Futhark.Analysis.Properties.Substitute (propFlattenOnce)
 import Futhark.Analysis.Properties.Convert
 import Futhark.Analysis.Properties.IndexFn
 import Futhark.Analysis.Properties.IndexFnPlus (subIndexFn)
@@ -19,8 +21,103 @@ import Test.Tasty.HUnit
 
 tests :: TestTree
 tests =
+  testGroup "Properties.IndexFn"
+    [ programTests
+    --, propFlattenTests
+    ]
+
+-- propFlattenTests :: TestTree
+-- propFlattenTests =
+--   testGroup "PropFlatten"
+--     [ testCase "rectangular i1 := i2*e3 + i3" $ do
+--         -- We just need a VNameSource to run IndexFnM. Any existing .fut is fine.
+--         (_, _, vns) <- readProgramOrDie "tests/indexfn/map.fut"
+--         let (actual, expected, i1) =
+--               fst $ flip runIndexFnM vns $ do
+--                 i1 <- newNameFromString "i1"
+--                 i2 <- newNameFromString "i2"
+--                 i3 <- newNameFromString "i3"
+--                 n  <- newNameFromString "n"
+--                 m  <- newNameFromString "m"
+
+--                 let e2 = sym2SoP (Var n)
+--                 let e3 = sym2SoP (Var m)
+--                 let e1 = e2 .*. e3
+
+--                 let g =
+--                       IndexFn
+--                         { shape = [[Forall i1 (Iota e1)]]
+--                         , body  = cases [(Bool True, sym2SoP (Var i1))]
+--                         }
+
+--                 let f =
+--                       IndexFn
+--                         { shape = [[Forall i2 (Iota e2), Forall i3 (Iota e3)]]
+--                         , body  = cases [(Bool True, sym2SoP (Var i3))]
+--                         }
+
+--                 Just g' <- propFlattenOnce 0 g f
+
+--                 eRow <- rewrite (sym2SoP (Var i2) .*. e3)
+--                 let expected =
+--                       IndexFn
+--                         { shape = [[Forall i2 (Iota e2), Forall i3 (Iota e3)]]
+--                         , body  = cases [(Bool True, eRow .+. sym2SoP (Var i3))]
+--                         }
+
+--                 pure (g', expected, i1)
+
+--         actual @??= expected
+--         assertBool "i1 eliminated from body" (i1 `S.notMember` fv (body actual))
+
+--     , testCase "segmented i1 := e[i2] + i3 (e3 == e[i2+1]-e[i2])" $ do
+--         (_, _, vns) <- readProgramOrDie "tests/indexfn/map.fut"
+--         let (actual, expected, i1) =
+--               fst $ flip runIndexFnM vns $ do
+--                 i1 <- newNameFromString "i1"
+--                 i2 <- newNameFromString "i2"
+--                 i3 <- newNameFromString "i3"
+--                 m  <- newNameFromString "m"
+--                 e  <- newNameFromString "e"
+
+--                 let e2 = sym2SoP (Var m)
+--                 let i2S = sym2SoP (Var i2)
+
+--                 let eAt t = sym2SoP (Apply (Var e) [t])
+
+--                 let e3 = eAt (i2S .+. int2SoP 1) .-. eAt i2S
+--                 let e1 = eAt e2
+
+--                 let g =
+--                       IndexFn
+--                         { shape = [[Forall i1 (Iota e1)]]
+--                         , body  = cases [(Bool True, sym2SoP (Var i1))]
+--                         }
+
+--                 let f =
+--                       IndexFn
+--                         { shape = [[Forall i2 (Iota e2), Forall i3 (Iota e3)]]
+--                         , body  = cases [(Bool True, sym2SoP (Var i3))]
+--                         }
+
+--                 Just g' <- propFlattenOnce 0 g f
+
+--                 let expected =
+--                       IndexFn
+--                         { shape = [[Forall i2 (Iota e2), Forall i3 (Iota e3)]]
+--                         , body  = cases [(Bool True, eAt i2S .+. sym2SoP (Var i3))]
+--                         }
+
+--                 pure (g', expected, i1)
+
+--         actual @??= expected
+--         assertBool "i1 eliminated from body" (i1 `S.notMember` fv (body actual))
+--     ]
+
+programTests :: TestTree
+programTests =
   testGroup
-    "Properties.IndexFn"
+    "Programs"
     [ mkTest
         "tests/indexfn/fft.fut"
         ( pure $ \(i, n, xs, _) ->
