@@ -1,6 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 
-module Futhark.Analysis.Properties.Convert (mkIndexFnProg, mkIndexFnValBind) where
+module Futhark.Analysis.Properties.Convert (mkIndexFnProg, mkIndexFnValBind, tryScatterSc2) where
 
 import Control.Applicative ((<|>))
 import Control.Monad (foldM, foldM_, forM, forM_, unless, void, when, zipWithM, (<=<))
@@ -1354,6 +1354,10 @@ scatterSc3 (IndexFn [[Forall i dom_dest]] _) = do
         body = cases [(Bool True, sym2SoP $ Apply (Var uninterpreted) [sVar i])]
       }
 scatterSc3 _ = fail ""
+
+-- Test hook: run scatterSc2 directly (without going through source conversion).
+tryScatterSc2 :: IndexFn -> IndexFn -> IndexFn -> IndexFnM (Maybe IndexFn)
+tryScatterSc2 xs is vs = runMaybeT $ scatterSc2 xs is vs
 
 {-
     Utilities.

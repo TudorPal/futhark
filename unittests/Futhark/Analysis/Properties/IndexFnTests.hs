@@ -27,12 +27,83 @@ actual @??= expected =
       docStringW 120 $
         "expected:" <+> pretty expected <> line <> "but got: " <+> pretty actual
 
+-- helper functions to help in Cat removal tests
+hasCat :: IndexFn -> Bool
+hasCat = any (any isCatQ) . shape
+  where
+    isCatQ (Forall _ d) = isCat d
+    isCat (Cat {}) = True
+    isCat _ = False
+
+hasFlattenedDim :: IndexFn -> Bool
+hasFlattenedDim = any ((> 1) . length) . shape
+
+data CatExpectation = AllowCat | NoCat
+  deriving (Eq, Show)
+
 tests :: TestTree
 tests =
   testGroup "Properties.IndexFn"
     [ programTests
     , propFlattenTests
+    --, catRefactorTestsFile
+    , catRefactorTests
     ]
+
+catRefactorTests :: TestTree
+catRefactorTests =
+  testGroup "CatRefactor"
+    [ scatterSc2RuleTest
+    ]
+
+catRefactorTestsFile :: TestTree
+catRefactorTestsFile =
+  testGroup "CatRefactor"
+    [ mkCatMigrationTest AllowCat "tests/indexfn/scatter_sc2.fut"
+    ]
+  where
+    mkCatMigrationTest expect programFile =
+      testCase (basename programFile) $ do
+        (_, imports, vns) <- readProgramOrDie programFile
+        let last_import = case reverse imports of
+              [] -> error "No imports"
+              x : _ -> x
+        let vbs = getValBinds last_import
+        when (null vbs) $
+          assertFailure "No value bindings found."
+
+        -- Same evaluation scheme as mkTest: run all preceding value bindings
+        -- before constructing the last one (same VNameSource).
+        let actuals =
+              fst $ flip runIndexFnM vns $ do
+                let preceding_vbs = init vbs
+                let last_vb = last vbs
+                forM_ preceding_vbs mkIndexFnValBind
+                mkIndexFnValBind last_vb
+
+        when (null actuals) $
+          assertFailure "The last value binding does not create an index function."
+
+        forM_ actuals $ \f -> case expect of
+          AllowCat ->
+            unless (hasCat f || hasFlattenedDim f) $
+              assertFailure $ docStringW 120 $
+                "Expected Cat encoding OR a flattened dimension encoding, but got:\n"
+                  <> pretty f
+          NoCat -> do
+            assertBool "Expected no Cat domains" (not (hasCat f))
+            assertBool "Expected a flattened dimension encoding" (hasFlattenedDim f)
+
+    basename = drop (length prefix)
+      where
+        prefix :: String
+        prefix = "tests/indexfn/"
+
+    getValBinds = mapMaybe getValBind . E.progDecs . fileProg . snd
+
+    getValBind (E.ValDec vb) = Just vb
+    getValBind _ = Nothing
+
 
 propFlattenTests :: TestTree
 propFlattenTests =
@@ -948,9 +1019,3 @@ programTests =
     sHole = sym2SoP . Hole
 
     sVar = sym2SoP . Var
-
-    -- actual @??= expected = unless (actual == expected) (assertFailure msg)
-    --   where
-    --     msg = do
-    --       docStringW 120 $
-    --         "expected:" <+> pretty expected <> line <> "but got: " <+> pretty actual
