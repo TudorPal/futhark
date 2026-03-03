@@ -53,7 +53,7 @@ tests =
 catRefactorTests :: TestTree
 catRefactorTests =
   testGroup "CatRefactor"
-    [ scatterSc2RuleTest AllowCat
+    [ scatterSc2RuleTest NoCat
     ]
 
 scatterSc2RuleTest :: CatExpectation -> TestTree
