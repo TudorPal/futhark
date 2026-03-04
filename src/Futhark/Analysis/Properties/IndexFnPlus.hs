@@ -33,23 +33,46 @@ import Language.Futhark (VName)
 
 domainStart :: Domain -> SoP Symbol
 domainStart (Iota _) = int2SoP 0
-domainStart (Cat k _ b) = rep (mkRep k (int2SoP 0 :: SoP Symbol)) b
+domainStart (Cat {}) = error "Cat domain should be gone (domainStart)"
+-- domainStart (Cat k _ b) = rep (mkRep k (int2SoP 0 :: SoP Symbol)) b
 
 domainEnd :: Domain -> SoP Symbol
 domainEnd (Iota n) = n .-. int2SoP 1
-domainEnd (Cat k m b) = rep (mkRep k m) b .-. int2SoP 1
+domainEnd   (Cat {}) = error "Cat domain should be gone (domainEnd)"
+-- domainEnd (Cat k m b) = rep (mkRep k m) b .-. int2SoP 1
 
 intervalStart :: Domain -> SoP Symbol
-intervalStart (Cat _ _ b) = b
-intervalStart (Iota _) = error "intervalEnd on iota"
+intervalStart (Cat {}) = error "Cat domain should be gone (intervalStart)"
+-- intervalStart (Cat _ _ b) = b
+intervalStart (Iota _) = error "intervalStart on iota"
 
 intervalEnd :: Domain -> SoP Symbol
-intervalEnd (Cat k _ b) = rep (mkRep k (sym2SoP (Var k) .+. int2SoP 1)) b .-. int2SoP 1
+intervalEnd   (Cat {}) = error "Cat domain should be gone (intervalEnd)"
+-- intervalEnd (Cat k _ b) = rep (mkRep k (sym2SoP (Var k) .+. int2SoP 1)) b .-. int2SoP 1
 intervalEnd (Iota _) = error "intervalEnd on iota"
 
 dimStart :: [Quantified Domain] -> SoP Symbol
 dimStart [] = undefined
 dimStart (dim : _) = domainStart (formula dim)
+
+sumSoP :: VName -> SoP Symbol -> SoP Symbol -> SoP Symbol -> SoP Symbol
+sumSoP i lb ub (SoP ts)
+  | M.null ts = int2SoP 0
+  | otherwise =
+      foldl
+        (.+.)
+        (int2SoP 0)
+        [ sumTerm term coeff | (term, coeff) <- M.toList ts
+        ]
+  where
+    -- Sum over a single SoP term.
+    -- If the term is constant 1, then sum_{i=lb}^{ub-1} 1 = ub-lb.
+    sumTerm term coeff
+      | isConstTerm term =
+          int2SoP coeff .*. (ub .-. lb .+. int2SoP 1)
+      | otherwise =
+          let oneTerm = SoP (M.singleton term 1)
+           in int2SoP coeff .*. sym2SoP (Sum i lb ub (sop2Symbol oneTerm))
 
 dimEnd :: [Quantified Domain] -> SoP Symbol
 dimEnd [] = undefined
@@ -58,7 +81,14 @@ dimEnd [Forall i (Iota n), Forall _ (Iota m)]
   -- Flat regular dimension.
   | i `S.notMember` fv m =
       n .*. m .-. int2SoP 1
-dimEnd _ = error "Not implemented yet"
+-- Segmented flattened dimension.
+-- Total size is sum_{k=0}^{m-1} len(k), so the last valid index is that - 1.
+dimEnd [Forall k (Iota m), Forall _ (Iota len)]
+  | k `S.member` fv len =
+    -- sym2SoP (Sum k 0 m (sop2Symbol len)) - 1   -- but len is a compound expression, so we need to sum over it properly.
+      let ub = m .-. int2SoP 1
+       in sumSoP k (int2SoP 0) ub len .-. int2SoP 1
+dimEnd _ = error "dont know why it should get here"
 
 dimSize :: [Quantified Domain] -> SoP Symbol
 dimSize d = dimEnd d .-. dimStart d .+. int2SoP 1
@@ -69,7 +99,7 @@ index [Forall i _, Forall j (Iota m)]
   -- Flat regular dimension.
   | i `S.notMember` fv m =
       sym2SoP (Var i) .*. m .+. sym2SoP (Var j)
-index _ = undefined
+index _ = error "Not implemented yet (index on non-1d or non-flat regular dimension)"
 
 -------------------------------------------------------------------------------
 -- Pretty.

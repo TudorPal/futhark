@@ -1,6 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 
-module Futhark.Analysis.Properties.Convert (mkIndexFnProg, mkIndexFnValBind) where
+module Futhark.Analysis.Properties.Convert (mkIndexFnProg, mkIndexFnValBind, tryScatterSc2) where
 
 import Control.Applicative ((<|>))
 import Control.Monad (foldM, foldM_, forM, forM_, unless, void, when, zipWithM, (<=<))
@@ -1321,19 +1321,47 @@ scatterSc2 xs@(IndexFn [[Forall _ d_xs]] _) is@(IndexFn [[Forall k (Iota m)]] _)
           Yes -> pure (Bool True)
           Unknown -> pure c
 
+      -- i <- newVName "i"
+      -- hole_xs <- newVName "hole_xs"
+      -- hole_vs <- newVName "hole_vs"
+      -- let p = sVar i :== e :&& c'
+      -- let f =
+      --       IndexFn
+      --         { shape = [[Forall i (Cat k m e)]],
+      --           body =
+      --             cases
+      --               [ (p, sym2SoP $ Apply (Var hole_vs) [sVar k]),
+      --                 (neg p, sym2SoP $ Apply (Var hole_xs) [sVar i])
+      --               ]
+      --         }
+      
+      -- Try doing it without Cat:
       i <- newVName "i"
       hole_xs <- newVName "hole_xs"
       hole_vs <- newVName "hole_vs"
-      let p = sVar i :== e :&& c'
+
+      -- Replace Cat k m e with a flattened dimension:
+      --   k : Iota m
+      --   i : Iota (e[k+1] - e[k])
+      -- absolute index abs_i = e[k] + i
+      let e_next = rep (mkRep k (sVar k .+. int2SoP 1)) e
+      let len    = e_next .-. e
+      let abs_i  = e .+. sVar i
+
+      -- In Cat encoding, segment start is i == e[k].
+      -- With offset i, segment start is i == 0.
+      let p = (sVar i :== int2SoP 0) :&& c'
+
       let f =
             IndexFn
-              { shape = [[Forall i (Cat k m e)]],
+              { shape = [[Forall k (Iota m), Forall i (Iota len)]],
                 body =
                   cases
-                    [ (p, sym2SoP $ Apply (Var hole_vs) [sVar k]),
-                      (neg p, sym2SoP $ Apply (Var hole_xs) [sVar i])
+                    [ (p,     sym2SoP $ Apply (Var hole_vs) [sVar k]),
+                      (neg p, sym2SoP $ Apply (Var hole_xs) [abs_i])
                     ]
               }
+
       lift $ substParams f [(hole_vs, vs), (hole_xs, xs)]
     _ -> failMsg "scatterSc2: unable to determine OOB branch"
 scatterSc2 _ _ _ = fail ""
@@ -1348,6 +1376,10 @@ scatterSc3 (IndexFn [[Forall i dom_dest]] _) = do
         body = cases [(Bool True, sym2SoP $ Apply (Var uninterpreted) [sVar i])]
       }
 scatterSc3 _ = fail ""
+
+-- Test hook: run scatterSc2 directly (without going through source conversion).
+tryScatterSc2 :: IndexFn -> IndexFn -> IndexFn -> IndexFnM (Maybe IndexFn)
+tryScatterSc2 xs is vs = runMaybeT $ scatterSc2 xs is vs
 
 {-
     Utilities.

@@ -1,12 +1,12 @@
 -- Index function substitution.
 {-# LANGUAGE LambdaCase #-}
 
-module Futhark.Analysis.Properties.Substitute ((@), subst) where
+module Futhark.Analysis.Properties.Substitute ((@), subst, propFlattenOnce) where
 
 import Control.Applicative ((<|>))
 import Control.Monad (foldM, when, (<=<))
 import Control.Monad.RWS (lift)
-import Control.Monad.Trans.Maybe (hoistMaybe, runMaybeT)
+import Control.Monad.Trans.Maybe (MaybeT (..), hoistMaybe, runMaybeT)
 import Data.Functor ((<&>))
 import Data.Map qualified as M
 import Data.Maybe (fromJust, fromMaybe, isJust)
@@ -23,7 +23,7 @@ import Futhark.Analysis.Properties.Traversals
 import Futhark.Analysis.Properties.Unify (Rep (..), Replacement, ReplacementBuilder (..), Substitution (..), Unify (..), fv, renameM)
 import Futhark.Analysis.Properties.Util
 import Futhark.MonadFreshNames (newVName)
-import Futhark.SoP.SoP (SoP, justSym, sym2SoP, (.*.), (.+.))
+import Futhark.SoP.SoP (SoP, int2SoP, justSym, sym2SoP, (.*.), (.+.), (.-.))
 import Futhark.Util.Pretty (prettyString)
 import Language.Futhark (VName)
 
@@ -99,6 +99,61 @@ subst indexfn = do
   k <- newVName "variables after this are quantifiers"
   g <- renameM indexfn
   subber (legalArg k g) g
+
+-- Try to apply PropFlatten on dimension k, propagating a flattened domain
+-- from f to g.
+--
+-- Returns Nothing if it does not match (or we cannot prove the required
+-- size relation).
+propFlattenOnce :: Int -> IndexFn -> IndexFn -> IndexFnM (Maybe IndexFn)
+propFlattenOnce k g f = runMaybeT $ do
+  if k >= rank g || k >= rank f
+    then fail "No match."
+    else case (shape g !! k, shape f !! k) of
+      ([Forall i1 (Iota e1)], df@[Forall i2 (Iota e2), Forall i3 (Iota e3)]) -> do
+        -- Two cases:
+        -- 1) Rectangular flattening (e3 independent of i2): i1 := i2*e3 + i3
+        -- 2) Segmented flattening via prefix-sums array e:
+        --      e3 == e[i2+1] - e[i2]  and  e1 == e[e2]
+        --    then i1 := e[i2] + i3
+        if i2 `S.notMember` fv e3
+          then do
+            ans <- lift (e1 $== e2 .*. e3)
+            case ans of
+              Yes -> do
+                eRow <- lift . rewrite $ sym2SoP (Var i2) .*. e3
+                let s = mkRep i1 (eRow .+. sym2SoP (Var i3))
+                let (l, _old : r) = splitAt k (shape g)
+                pure $ g {shape = l <> (df : r), body = repCases s (body g)}
+              Unknown -> pure g
+          else do
+            -- Recognise the common segmented pattern:
+            --   e3 == e[i2+1] - e[i2]
+            --   e1 == e[e2]
+            hE <- lift $ newVName "e"
+            let i2S = sym2SoP (Var i2)
+            let patE3 =
+                  sym2SoP (Apply (Hole hE) [i2S .+. int2SoP 1])
+                    .-. sym2SoP (Apply (Hole hE) [i2S])
+
+            mSub <- lift $ unify patE3 e3
+            case mSub of
+              Nothing -> pure g
+              Just sUnify -> do
+                eSop <- hoistMaybe $ mapping sUnify M.!? hE
+                eSym <- hoistMaybe $ justSym eSop
+                eVn  <- hoistMaybe $ justVar eSym
+
+                let end = sym2SoP (Apply (Var eVn) [e2])
+                ans <- lift (e1 $== end)
+                case ans of
+                  Yes -> do
+                    let start = sym2SoP (Apply (Var eVn) [sym2SoP (Var i2)])
+                    let s = mkRep i1 (start .+. sym2SoP (Var i3))
+                    let (l, _old : r) = splitAt k (shape g)
+                    pure $ g {shape = l <> (df : r), body = repCases s (body g)}
+                  Unknown -> pure g
+      _ -> fail "No match."
 
 -- Are you substituting xs[i] for xs = for i < e . true => xs[i]?
 -- This happens when xs is a formal argument. (So not relevant for flattened arrays.)
@@ -257,7 +312,7 @@ substituteOnce f g_presub (f_apply, actual_args) = do
                 (CaseCheck (\_ -> bounds $ args M.! i))
                 g_presub
         arg_eq_j `orM` arg_in_segment_bounds
-      _ -> error "Not implemented yet"
+      _ -> error "Not implemented yet (arg_in_segment_of_f on non-1d or non-flat regular dimension)"
 
     -- Apply first matching rule for each dimension in f.
     applySubRules g =
@@ -266,8 +321,17 @@ substituteOnce f g_presub (f_apply, actual_args) = do
           then subRules g 0
           else foldM subRules g [0 .. rank f - 1]
 
+    -- subRules g n =
+    --   sub0 g <|> propFlattenSimplified n g <|> sub1 n g <|> sub2 n g <|> sub3 n g <|> sub4 n g <|> subX n g
+
     subRules g n =
-      sub0 g <|> propFlattenSimplified n g <|> sub1 n g <|> sub2 n g <|> sub3 n g <|> sub4 n g <|> subX n g
+      sub0 g
+        <|> MaybeT (propFlattenOnce n g f)
+        <|> sub1 n g
+        -- <|> sub2 n g
+        -- <|> sub3 n g
+        -- <|> sub4 n g
+        -- <|> subX n g
 
     -- This is rule is needed because we represent scalars as empty shapes rather
     -- than `for i < 1`, as is done in the paper.
@@ -298,7 +362,8 @@ substituteOnce f g_presub (f_apply, actual_args) = do
                 let s = mkRep i_1 (e_row .+. sym2SoP (Var i_3))
                 let res = g {shape = l <> (df : r), body = repCases s (body g)}
                 printM 1 $ "  |_ g " <> prettyStr res
-                error "propFlattenSimplified succeeded (I'd like to know first time when getting rid of Cat)"
+                pure res
+                --error "propFlattenSimplified succeeded (I'd like to know first time when getting rid of Cat)"
               Unknown -> pure g
         where
           (l, _old_iter : r) = splitAt k (shape g)

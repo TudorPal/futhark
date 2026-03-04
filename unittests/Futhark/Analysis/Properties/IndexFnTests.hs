@@ -2,6 +2,8 @@ module Futhark.Analysis.Properties.IndexFnTests (tests) where
 
 import Control.Monad (forM, forM_, unless, when)
 import Data.Maybe (mapMaybe)
+import qualified Data.Set as S
+import Futhark.Analysis.Properties.Substitute (propFlattenOnce)
 import Futhark.Analysis.Properties.Convert
 import Futhark.Analysis.Properties.IndexFn
 import Futhark.Analysis.Properties.IndexFnPlus (subIndexFn)
@@ -12,15 +14,347 @@ import Futhark.Analysis.Properties.Unify (renameSame, unify)
 import Futhark.Compiler.CLI (fileProg, readProgramOrDie)
 import Futhark.MonadFreshNames (newNameFromString)
 import Futhark.SoP.SoP (int2SoP, sym2SoP, (.*.), (.+.), (.-.))
-import Futhark.Util.Pretty (docStringW, line, pretty, (<+>))
+import Futhark.Util.Pretty (Pretty, docStringW, line, pretty, (<+>), (</>))
 import Language.Futhark qualified as E
 import Test.Tasty
 import Test.Tasty.HUnit
 
+(@??=) :: (Eq a, Pretty a) => a -> a -> IO ()
+actual @??= expected =
+  unless (actual == expected) (assertFailure msg)
+  where
+    msg =
+      docStringW 120 $
+        "expected:" <+> pretty expected <> line <> "but got: " <+> pretty actual
+
+-- helper functions to help in Cat removal tests
+hasCat :: IndexFn -> Bool
+hasCat = any (any isCatQ) . shape
+  where
+    isCatQ (Forall _ d) = isCat d
+    isCat (Cat {}) = True
+    isCat _ = False
+
+hasFlattenedDim :: IndexFn -> Bool
+hasFlattenedDim = any ((> 1) . length) . shape
+
+data CatExpectation = AllowCat | NoCat
+  deriving (Eq, Show)
+
 tests :: TestTree
 tests =
+  testGroup "Properties.IndexFn"
+    [ programTests
+    , propFlattenTests
+    --, catRefactorTests
+    ]
+
+catRefactorTests :: TestTree
+catRefactorTests =
+  testGroup "CatRefactor"
+    [ scatterSc2RuleTest NoCat
+    --, noCatSelectedProgramsTest
+    --, noCatPrograms
+    ]
+
+noCatPrograms :: TestTree
+noCatPrograms =
   testGroup
-    "Properties.IndexFn"
+    "NoCatPrograms"
+    [ mkNoCatTest "tests/indexfn/fft.fut"
+    , mkNoCatTest "tests/indexfn/bug.fut"
+    , mkNoCatTest "tests/indexfn/bug2.fut"
+    , mkNoCatTest "tests/indexfn/map.fut"
+    , mkNoCatTest "tests/indexfn/scatter_perm.fut"
+    , mkNoCatTest "tests/indexfn/reverse.fut"
+    , mkNoCatTest "tests/indexfn/abs.fut"
+    , mkNoCatTest "tests/indexfn/map-tuple.fut"
+    , mkNoCatTest "tests/indexfn/map-tuple2.fut"
+    , mkNoCatTest "tests/indexfn/map-if.fut"
+    , mkNoCatTest "tests/indexfn/map-if-nested.fut"
+    , mkNoCatTest "tests/indexfn/map-if-elim.fut"
+    , mkNoCatTest "tests/indexfn/scalar.fut"
+    , mkNoCatTest "tests/indexfn/scan.fut"
+    , mkNoCatTest "tests/indexfn/scan_lambda.fut"
+    , mkNoCatTest "tests/indexfn/scan2.fut"
+    , mkNoCatTest "tests/indexfn/scalar2.fut"
+    , mkNoCatTest "tests/indexfn/part2indices.fut"
+    , mkNoCatTest "tests/indexfn/map2.fut"
+    , mkNoCatTest "tests/indexfn/part2indices_numeric_conds.fut"
+    , mkNoCatTest "tests/indexfn/part2indices_predicatefn.fut"
+    , mkNoCatTest "tests/indexfn/part2indices_predicatefn2.fut"
+    , mkNoCatTest "tests/indexfn/part3indices.fut"
+    , mkNoCatTest "tests/indexfn/segment_sum.fut"
+    , mkNoCatTest "tests/indexfn/filter_indices.fut"
+    , mkNoCatTest "tests/indexfn/partition.fut"
+    , mkNoCatTest "tests/indexfn/partition2_alt.fut"
+    , mkNoCatTest "tests/indexfn/seg_partition.fut"
+    , mkNoCatTest "tests/indexfn/partition3.fut"
+    , mkNoCatTest "tests/indexfn/filter.fut"
+    , mkNoCatTest "tests/indexfn/filter_segmented_array.fut"
+    , mkNoCatTest "tests/indexfn/maxMatch.fut"
+    , mkNoCatTest "tests/indexfn/maxMatch_2d.fut"
+    , mkNoCatTest "tests/indexfn/kmeans_kernel.fut"
+    , mkNoCatTest "tests/indexfn/nd_map-map.fut"
+    , mkNoCatTest "tests/indexfn/nd_map-scan.fut"
+    , mkNoCatTest "tests/indexfn/nd_expansion.fut"
+    , mkNoCatTest "tests/indexfn/if-array-type.fut"
+    , mkNoCatTest "tests/indexfn/zipArgs2d.fut"
+    , mkNoCatTest "tests/indexfn/primes.fut"
+    , mkNoCatTest "tests/indexfn/mis.fut"
+    , mkNoCatTest "tests/indexfn/quickhull.fut"
+    , mkNoCatTest "tests/indexfn/srad.fut"
+    , mkNoCatTest "tests/indexfn/for_postcondition.fut"
+    , mkNoCatTest "tests/indexfn/for_precondition.fut"
+    , mkNoCatTest "tests/indexfn/for_parsing.fut"
+    --, mkNoCatTest "tests/indexfn/scatter_sc2.fut"
+    ]
+  where
+    mkNoCatTest programFile = testCase (basename programFile) $ do
+      (_, imports, vns) <- readProgramOrDie programFile
+      let last_import = case reverse imports of
+            [] -> error "No imports"
+            x : _ -> x
+      let vbs = getValBinds last_import
+      when (null vbs) $
+        assertFailure "No value bindings found."
+
+      let actuals =
+            fst $ flip runIndexFnM vns $ do
+              let preceding_vbs = init vbs
+              let last_vb = last vbs
+              forM_ preceding_vbs mkIndexFnValBind
+              mkIndexFnValBind last_vb
+
+      when (null actuals) $
+        assertFailure "The last value binding does not create an index function."
+
+      forM_ actuals $ \f -> do
+        unless (not (hasCat f)) $
+          assertFailure $ docStringW 120 $
+            "Expected no Cat domains, but got:\n" <> pretty f
+
+    basename = drop (length prefix)
+      where
+        prefix :: String
+        prefix = "tests/indexfn/"
+
+    getValBinds = mapMaybe getValBind . E.progDecs . fileProg . snd
+
+    getValBind (E.ValDec vb) = Just vb
+    getValBind _ = Nothing
+
+noCatSelectedProgramsTest :: TestTree
+noCatSelectedProgramsTest =
+  testGroup "NoCatSelectedPrograms"
+    [ mkNoCatProgram "tests/indexfn/fft.fut"
+    , mkNoCatProgram "tests/indexfn/map.fut"
+    , mkNoCatProgram "tests/indexfn/scan_lambda.fut"
+    , mkNoCatProgram "tests/indexfn/scatter_sc2.fut"
+    ]
+  where
+    mkNoCatProgram programFile =
+      testCase (basename programFile) $ do
+        (_, imports, vns) <- readProgramOrDie programFile
+        let last_import = case reverse imports of
+              [] -> error "No imports"
+              x : _ -> x
+        let vbs = getValBinds last_import
+        when (null vbs) $
+          assertFailure "No value bindings found."
+
+        -- Same evaluation scheme as mkTest: run all preceding value bindings
+        -- before constructing the last one (same VNameSource).
+        let actuals =
+              fst $ flip runIndexFnM vns $ do
+                let preceding_vbs = init vbs
+                let last_vb = last vbs
+                forM_ preceding_vbs mkIndexFnValBind
+                mkIndexFnValBind last_vb
+
+        when (null actuals) $
+          assertFailure "The last value binding does not create an index function."
+
+        forM_ actuals $ \f -> do
+          unless (not (hasCat f)) $
+            assertFailure $ docStringW 120 $
+              "Expected no Cat domains, but got:\n" <> pretty f
+
+    basename = drop (length prefix)
+      where
+        prefix :: String
+        prefix = "tests/indexfn/"
+
+    getValBinds = mapMaybe getValBind . E.progDecs . fileProg . snd
+
+    getValBind (E.ValDec vb) = Just vb
+    getValBind _ = Nothing
+
+scatterSc2RuleTest :: CatExpectation -> TestTree
+scatterSc2RuleTest expect =
+  testCase "Convert.scatterSc2 migration (direct rule)" $ do
+    -- We just need a VNameSource to run IndexFnM. Any existing .fut is fine.
+    (_, _, vns) <- readProgramOrDie "tests/indexfn/map.fut"
+
+    let mf =
+          fst $ flip runIndexFnM vns $ do
+            -- size variable m (scalar)
+            m <- newNameFromString "m"
+
+            -- iterator names
+            i <- newNameFromString "i"
+            k <- newNameFromString "k"
+
+            let mS = sym2SoP (Var m)
+
+            -- xs : [0..m-1] -> i  (simple base array)
+            let xs =
+                  IndexFn
+                    { shape = [[Forall i (Iota mS)]]
+                    , body  = cases [(Bool True, sym2SoP (Var i))]
+                    }
+
+            -- vs : [0..m-1] -> k  (simple values array)
+            let vs =
+                  IndexFn
+                    { shape = [[Forall k (Iota mS)]]
+                    , body  = cases [(Bool True, sym2SoP (Var k))]
+                    }
+
+            -- is : shape [[k : Iota m]]
+            --
+            -- Two branches crafted to match scatterSc2's expected sorting:
+            --   - Unknown for in-domain check: expression m (cannot prove m < m)
+            --   - Yes for in-domain check: expression k (k is provably in [0,m))
+            --
+            -- The in-bounds branch uses e = k, which satisfies the monotonic
+            -- boundary checks inside scatterSc2 (e[0]=0, e[m]=m, monotone).
+            let is =
+                  IndexFn
+                    { shape = [[Forall k (Iota mS)]]
+                    , body =
+                        cases
+                          [ (Bool True, sym2SoP (Var m)) -- OOB-ish => Unknown in_dom_xs
+                          , (Bool True, sym2SoP (Var k)) -- in-bounds => Yes in_dom_xs
+                          ]
+                    }
+
+            tryScatterSc2 xs is vs
+
+    f <- case mf of
+      Nothing -> assertFailure "tryScatterSc2 returned Nothing (scatterSc2 did not match)." >> error "unreachable"
+      Just f  -> pure f
+
+    case expect of
+      AllowCat ->
+        assertBool
+          "Expected Cat encoding OR a flattened dimension encoding"
+          (hasCat f || hasFlattenedDim f)
+      NoCat -> do
+        assertBool "Expected no Cat domains" (not (hasCat f))
+        assertBool "Expected a flattened dimension encoding" (hasFlattenedDim f)
+
+
+
+propFlattenTests :: TestTree
+propFlattenTests =
+  testGroup "PropFlatten"
+    [ testCase "rectangular i1 := i2*e3 + i3" $ do
+        -- We just need a VNameSource to run IndexFnM. Any existing .fut is fine.
+        (_, _, vns) <- readProgramOrDie "tests/indexfn/map.fut"
+        let (mg', expected, _i1) =
+              fst $ flip runIndexFnM vns $ do
+                i1 <- newNameFromString "i1"
+                i2 <- newNameFromString "i2"
+                i3 <- newNameFromString "i3"
+                n  <- newNameFromString "n"
+                m  <- newNameFromString "m"
+
+                let e2 = sym2SoP (Var n) -- 
+                let e3 = sym2SoP (Var m)
+                let e1 = e2 .*. e3
+
+                let g =
+                      IndexFn
+                        { shape = [[Forall i1 (Iota e1)]]
+                        , body  = cases [(Bool True, sym2SoP (Var i1))]
+                        }
+
+                let f =
+                      IndexFn
+                        { shape = [[Forall i2 (Iota e2), Forall i3 (Iota e3)]]
+                        , body  = cases [(Bool True, sym2SoP (Var i3))]
+                        }
+
+                mg' <- propFlattenOnce 0 g f
+
+                let eRow = sym2SoP (Var i2) .*. e3
+
+                let expected =
+                      IndexFn
+                        { shape = [[Forall i2 (Iota e2), Forall i3 (Iota e3)]]
+                        , body  = cases [(Bool True, eRow .+. sym2SoP (Var i3))]
+                        }
+
+                pure (mg', expected, i1)
+
+        actual <- case mg' of
+          Nothing -> assertFailure "propFlattenOnce did not apply (got Nothing)" >> error "unreachable"
+          Just g' -> pure g'
+
+        actual @??= expected
+
+    , testCase "segmented i1 := e[i2] + i3 (e3 == e[i2+1]-e[i2])" $ do
+        (_, _, vns) <- readProgramOrDie "tests/indexfn/map.fut"
+        let (mg', expected, _i1) =
+              fst $ flip runIndexFnM vns $ do
+                i1 <- newNameFromString "i1"
+                i2 <- newNameFromString "i2"
+                i3 <- newNameFromString "i3"
+                m  <- newNameFromString "m"
+                e  <- newNameFromString "e"
+
+                let e2 = sym2SoP (Var m)
+                let i2S = sym2SoP (Var i2)
+
+                let eAt t = sym2SoP (Apply (Var e) [t])
+
+                let e3 = eAt (i2S .+. int2SoP 1) .-. eAt i2S
+                let e1 = eAt e2
+
+                let g =
+                      IndexFn
+                        { shape = [[Forall i1 (Iota e1)]]
+                        , body  = cases [(Bool True, sym2SoP (Var i1))]
+                        }
+
+                let f =
+                      IndexFn
+                        { shape = [[Forall i2 (Iota e2), Forall i3 (Iota e3)]]
+                        , body  = cases [(Bool True, sym2SoP (Var i3))]
+                        }
+
+                mg' <- propFlattenOnce 0 g f
+
+                let expected =
+                      IndexFn
+                        { shape = [[Forall i2 (Iota e2), Forall i3 (Iota e3)]]
+                        , body  = cases [(Bool True, eAt i2S .+. sym2SoP (Var i3))]
+                        }
+
+                pure (mg', expected, i1)
+
+        actual <- case mg' of
+          Nothing -> assertFailure "propFlattenOnce did not apply (got Nothing)" >> error "unreachable"
+          Just g' -> pure g'
+
+        actual @??= expected
+    ]
+
+programTests :: TestTree
+programTests =
+  testGroup
+    "Programs"
     [ mkTest
         "tests/indexfn/fft.fut"
         ( pure $ \(i, n, xs, _) ->
@@ -836,9 +1170,3 @@ tests =
     sHole = sym2SoP . Hole
 
     sVar = sym2SoP . Var
-
-    actual @??= expected = unless (actual == expected) (assertFailure msg)
-      where
-        msg = do
-          docStringW 120 $
-            "expected:" <+> pretty expected <> line <> "but got: " <+> pretty actual
