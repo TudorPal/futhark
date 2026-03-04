@@ -85,6 +85,7 @@ dimEnd [Forall i (Iota n), Forall _ (Iota m)]
 -- Total size is sum_{k=0}^{m-1} len(k), so the last valid index is that - 1.
 dimEnd [Forall k (Iota m), Forall _ (Iota len)]
   | k `S.member` fv len =
+    -- sym2SoP (Sum k 0 m (sop2Symbol len)) - 1   -- but len is a compound expression, so we need to sum over it properly.
       let ub = m .-. int2SoP 1
        in sumSoP k (int2SoP 0) ub len .-. int2SoP 1
 dimEnd _ = error "dont know why it should get here"

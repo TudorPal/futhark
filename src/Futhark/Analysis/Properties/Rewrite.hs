@@ -9,7 +9,7 @@ import Futhark.Analysis.Properties.AlgebraBridge (Answer (..), addRelShape, alge
 import Futhark.Analysis.Properties.IndexFn (Domain (Iota), IndexFn (..), Quantified (..), cases, casesToList)
 import Futhark.Analysis.Properties.Monad (IndexFnM, rollbackAlgEnv)
 import Futhark.Analysis.Properties.Query ((=>?), unifiesWith)
-import Futhark.Analysis.Properties.Rule (Rule (..), applyRuleBook, rulesIndexFn)
+import Futhark.Analysis.Properties.Rule (Rule (..), applyRuleBook, rulesIndexFn, vacuous)
 import Futhark.Analysis.Properties.Symbol (Symbol (..), toCNF)
 import Futhark.Analysis.Properties.Traversals
 import Futhark.Analysis.Properties.Unify (Renameable, fv, renameSame)
@@ -116,7 +116,7 @@ solveIx [dim] =
       h2 <- newVName "h"
       h3 <- newVName "h"
       h4 <- newVName "h"
-      pure []
+      pure
         -- XXX This somehow can remove a -1 factor.
         -- [ Rule
         --     { name = "SolveIdx0",
@@ -135,6 +135,23 @@ solveIx [dim] =
         --         solveIdx0sidecond dim (Ix n m e_idx)
         --     }
         -- ]
+        [ Rule
+            { name = "SolveNestedSum",
+              from = sym2SoP (Sum (h1) (int2SoP 0) (hole h2) (Apply (Hole h3) [hole h1])) 
+              .-. sym2SoP (Sum (h1) (int2SoP 0) (hole h2 .-. int2SoP 1) (Apply (Hole h3) [hole h1])),
+              to = \s -> error "NEW RULE",
+                -- apply (hole h3) [hole h2]
+                
+                -- do
+                -- n <- sub s (hole h1)
+                -- m <- sub s (hole h2)
+                -- e_idx <- sub s (hole h3)
+                -- t <- sub s (hole h4)
+                -- printM 0 ("### t " <> prettyStr t)
+                -- (t .*.) <$> solveIdx0 dim (Ix n m e_idx),
+              sideCondition = vacuous
+            }
+        ]
       where
         hole = sym2SoP . Hole
 solveIx _shape = pure
