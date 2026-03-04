@@ -142,7 +142,7 @@ mkIndexFnValBind val@(E.ValBind _ vn (Just te) _ type_params params body _ _ val
         type_params
     -- Adds the effect of a precondition without checking that it holds.
     addPreconditions pat = do
-      printM 1 $ "+ Adding precondition on " <> prettyStr pat
+      printM 1 $ warningString "+" <> " Adding precondition on " <> prettyStr pat
       ref <- getRefinement pat
       forM_ ref $ \(_, effect) -> effect emptyCheckContext
       printAlgEnv 3
@@ -209,22 +209,20 @@ changeScope :: S.Set E.VName -> IndexFn -> IndexFnM IndexFn
 changeScope newScope f
   | fv f `S.isSubsetOf` newScope = pure f
   | fv (shape f) `S.isSubsetOf` newScope = do
-      g <- mkUinterpreted f
+      g <- mkUninterpreted (S.toList newScope) f
       pure $ g {shape = shape f}
-  | otherwise = mkUinterpreted f
+  | otherwise = mkUninterpreted (S.toList newScope) f
 
-uninterpretedName :: String
-uninterpretedName = "<f>"
-
-mkUinterpreted :: IndexFn -> IndexFnM IndexFn
-mkUinterpreted f = do
+mkUninterpreted :: [E.VName] -> IndexFn -> IndexFnM IndexFn
+mkUninterpreted params f = do
   new_shape <- forM (shape f) . mapM $ \(Forall i _) ->
     Forall i . Iota . sym2SoP . Var <$> newNameFromString "<d>"
   x <- newNameFromString uninterpretedName
+  let params' = map (sym2SoP . Var) params
   pure $
     IndexFn
       { shape = new_shape,
-        body = singleCase (sym2SoP $ Apply (Var x) (indexVars f))
+        body = singleCase (sym2SoP $ Apply (Var x) (indexVars f <> (if null (indexVars f) then params' else [])))
       }
 
 bodyIsUinterpreted :: IndexFn -> Bool
@@ -346,21 +344,22 @@ renamingRep actual_args actual_arg_exprs =
 checkPreconditions :: (Pretty u, Pretty (E.Shape dim)) => E.SrcLoc -> E.VName -> [E.PatBase E.Info E.VName (E.TypeBase dim u)] -> ([[(E.VName, IndexFn)]], [[(E.VName, SoP Symbol)]]) -> M.Map E.VName (SoP Symbol) -> IndexFnM (M.Map E.VName (SoP Symbol))
 checkPreconditions loc g pats (actual_args, actual_sizes) name_rep = do
   let size_rep = M.fromList $ mconcat actual_sizes
-  rollbackAlgEnv $ foldM_
-    ( \args_in_scope (pat, arg) -> do
-        let scope = args_in_scope <> arg
-        effects <- checkPatPrecondition scope pat size_rep
-        -- Temporarily add preconditions to the environment so that subsequent
-        -- preconditions can be validated against previous arguments. Example:
-        --   def f (x: | Range x (0..n)) (y: | For y (\i -> P(y[x[i]])))
-        --   def g a b = f a b
-        -- Indexing y[x[i]] is only safe if x's internal Range is in scope.
-        -- No name substitutions because we want to add it on `x`, not g's `a`.
-        forM_ effects $ \effect -> effect (mempty, scope, mempty)
-        pure scope
-    )
-    []
-    (zip pats actual_args)
+  rollbackAlgEnv $
+    foldM_
+      ( \args_in_scope (pat, arg) -> do
+          let scope = args_in_scope <> arg
+          effects <- checkPatPrecondition scope pat size_rep
+          -- Temporarily add preconditions to the environment so that subsequent
+          -- preconditions can be validated against previous arguments. Example:
+          --   def f (x: | Range x (0..n)) (y: | For y (\i -> P(y[x[i]])))
+          --   def g a b = f a b
+          -- Indexing y[x[i]] is only safe if x's internal Range is in scope.
+          -- No name substitutions because we want to add it on `x`, not g's `a`.
+          forM_ effects $ \effect -> effect (mempty, scope, mempty)
+          pure scope
+      )
+      []
+      (zip pats actual_args)
 
   pure size_rep
   where
@@ -695,11 +694,12 @@ forward expr@(E.AppExp (E.Apply e_f args loc) appres)
         addRelDim outer_dim
         forward lam_body
 
-      neutrals <- forward ne
+      neutrals <- zip acc_vns <$> forward ne
+      let recurrences = mkRepFromList $ map (,sym2SoP Recurrence) acc_vns
 
-      forM (zip3 bodies acc_vns neutrals) $ \(f_body, acc, f_ne) -> do
-        let f_rec = repIndexFn (mkRep acc (sym2SoP Recurrence)) f_body
-        f_base <- f_body @ (acc, f_ne)
+      forM bodies $ \f_body -> do
+        let f_rec = repIndexFn recurrences f_body
+        f_base <- f_body `substParams` neutrals
         base_case <- newVName "#base_case"
         rec_case <- newVName "#rec_case"
         f_scan <-
@@ -740,7 +740,8 @@ forward expr@(E.AppExp (E.Apply e_f args loc) appres)
           Unknown -> do
             printM 10 "scatter: unable to show safety"
             pure Nothing
-          Yes ->
+          Yes -> do
+            printM 1 . locMsg (E.locOf expr) $ prettyStr expr <> greenString " SAFE"
             runMaybeT $
               scatterSc1 dest (e_inds, inds) vals
                 <|> scatterSc2 dest inds vals
@@ -792,7 +793,6 @@ forward expr@(E.AppExp (E.Apply e_f args loc) appres)
         Nothing -> do
           g <- lookupUninterpreted e_f
           -- We treat g as an uninterpreted function.
-          printM 1 $ warningMsg loc ("g: " <> prettyStr g)
           arg_fns <- mconcat <$> mapM forward (getArgs args)
           let return_type = E.appResType (E.unInfo appres)
           size <- shapeOf return_type
@@ -829,13 +829,7 @@ forward (E.AppExp (E.Loop _sz _init_pat _init form e_body _loc) _) = do
         forM_ conds . mapM_ $ assume . sop2Symbol
       _ -> error "not implemented"
     forward e_body
-  -- Create uninterpreted functions that vary like the actual loop body's
-  -- result. (If we just create scalars we can prove injectivity erroneously
-  -- etc.)
-  let mkUntransFun f = do
-        vn <- newVName "untranslatable_loop"
-        pure $ f {body = singleCase . sym2SoP $ Apply (Var vn) (map (sVar . boundVar) (concat $ shape f))}
-  mapM mkUntransFun fs
+  mapM (mkUninterpreted []) fs
 forward (E.Coerce e _ _ _) = do
   -- No-op; I've only seen coercions that are hints for array sizes.
   forward e
@@ -1375,7 +1369,7 @@ scatterSc2 _ _ _ = fail ""
 -- Scatter fallback: result is uninterpreted, but safe.
 scatterSc3 :: IndexFn -> MaybeT IndexFnM IndexFn
 scatterSc3 (IndexFn [[Forall i dom_dest]] _) = do
-  uninterpreted <- newNameFromString "safe_scatter"
+  uninterpreted <- newNameFromString uninterpretedName
   lift . pure $
     IndexFn
       { shape = [[Forall i dom_dest]],
@@ -1650,10 +1644,6 @@ type Check = CheckContext -> IndexFnM Answer
 
 type Effect = CheckContext -> IndexFnM ()
 
--- Extract the Check to verify a formal argument's precondition, if it exists.
-getPrecondition :: E.PatBase E.Info E.VName (E.TypeBase dim u) -> IndexFnM [Check]
-getPrecondition = fmap (fmap fst) . getRefinement
-
 -- Extract the Check to verify, and the Effect of, a formal argument's refinement, if it exists.
 getRefinement :: E.PatBase E.Info E.VName (E.TypeBase dim u) -> IndexFnM [(Check, Effect)]
 getRefinement (E.PatParens pat _) = getRefinement pat
@@ -1731,7 +1721,7 @@ checkBounds _ (IndexFn [] _) _ =
 checkBounds e f_xs idxs =
   whenBoundsChecking $ do
     forM_ (zip (shape f_xs) idxs) checkIndexInDomain
-    printM 1 . locMsg (E.locOf e) $ prettyStr e <> greenString " OK"
+    printM 1 . locMsg (E.locOf e) $ prettyStr e <> greenString " SAFE"
   where
     checkIndexInDomain (_, Nothing) = pure ()
     checkIndexInDomain ([Forall _ d], Just f_idx) =
