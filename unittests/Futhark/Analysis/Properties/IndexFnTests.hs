@@ -14,7 +14,7 @@ import Futhark.Analysis.Properties.Unify (renameSame, unify)
 import Futhark.Compiler.CLI (fileProg, readProgramOrDie)
 import Futhark.MonadFreshNames (newNameFromString)
 import Futhark.SoP.SoP (int2SoP, sym2SoP, (.*.), (.+.), (.-.))
-import Futhark.Util.Pretty (Pretty, docStringW, line, pretty, (<+>))
+import Futhark.Util.Pretty (Pretty, docStringW, line, pretty, (<+>), (</>))
 import Language.Futhark qualified as E
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -46,15 +46,149 @@ tests =
   testGroup "Properties.IndexFn"
     [ programTests
     , propFlattenTests
-    --, catRefactorTestsFile
-    , catRefactorTests
+    --, catRefactorTests
     ]
 
 catRefactorTests :: TestTree
 catRefactorTests =
   testGroup "CatRefactor"
     [ scatterSc2RuleTest NoCat
+    --, noCatSelectedProgramsTest
+    --, noCatPrograms
     ]
+
+noCatPrograms :: TestTree
+noCatPrograms =
+  testGroup
+    "NoCatPrograms"
+    [ mkNoCatTest "tests/indexfn/fft.fut"
+    , mkNoCatTest "tests/indexfn/bug.fut"
+    , mkNoCatTest "tests/indexfn/bug2.fut"
+    , mkNoCatTest "tests/indexfn/map.fut"
+    , mkNoCatTest "tests/indexfn/scatter_perm.fut"
+    , mkNoCatTest "tests/indexfn/reverse.fut"
+    , mkNoCatTest "tests/indexfn/abs.fut"
+    , mkNoCatTest "tests/indexfn/map-tuple.fut"
+    , mkNoCatTest "tests/indexfn/map-tuple2.fut"
+    , mkNoCatTest "tests/indexfn/map-if.fut"
+    , mkNoCatTest "tests/indexfn/map-if-nested.fut"
+    , mkNoCatTest "tests/indexfn/map-if-elim.fut"
+    , mkNoCatTest "tests/indexfn/scalar.fut"
+    , mkNoCatTest "tests/indexfn/scan.fut"
+    , mkNoCatTest "tests/indexfn/scan_lambda.fut"
+    , mkNoCatTest "tests/indexfn/scan2.fut"
+    , mkNoCatTest "tests/indexfn/scalar2.fut"
+    , mkNoCatTest "tests/indexfn/part2indices.fut"
+    , mkNoCatTest "tests/indexfn/map2.fut"
+    , mkNoCatTest "tests/indexfn/part2indices_numeric_conds.fut"
+    , mkNoCatTest "tests/indexfn/part2indices_predicatefn.fut"
+    , mkNoCatTest "tests/indexfn/part2indices_predicatefn2.fut"
+    , mkNoCatTest "tests/indexfn/part3indices.fut"
+    , mkNoCatTest "tests/indexfn/segment_sum.fut"
+    , mkNoCatTest "tests/indexfn/filter_indices.fut"
+    , mkNoCatTest "tests/indexfn/partition.fut"
+    , mkNoCatTest "tests/indexfn/partition2_alt.fut"
+    , mkNoCatTest "tests/indexfn/seg_partition.fut"
+    , mkNoCatTest "tests/indexfn/partition3.fut"
+    , mkNoCatTest "tests/indexfn/filter.fut"
+    , mkNoCatTest "tests/indexfn/filter_segmented_array.fut"
+    , mkNoCatTest "tests/indexfn/maxMatch.fut"
+    , mkNoCatTest "tests/indexfn/maxMatch_2d.fut"
+    , mkNoCatTest "tests/indexfn/kmeans_kernel.fut"
+    , mkNoCatTest "tests/indexfn/nd_map-map.fut"
+    , mkNoCatTest "tests/indexfn/nd_map-scan.fut"
+    , mkNoCatTest "tests/indexfn/nd_expansion.fut"
+    , mkNoCatTest "tests/indexfn/if-array-type.fut"
+    , mkNoCatTest "tests/indexfn/zipArgs2d.fut"
+    , mkNoCatTest "tests/indexfn/primes.fut"
+    , mkNoCatTest "tests/indexfn/mis.fut"
+    , mkNoCatTest "tests/indexfn/quickhull.fut"
+    , mkNoCatTest "tests/indexfn/srad.fut"
+    , mkNoCatTest "tests/indexfn/for_postcondition.fut"
+    , mkNoCatTest "tests/indexfn/for_precondition.fut"
+    , mkNoCatTest "tests/indexfn/for_parsing.fut"
+    --, mkNoCatTest "tests/indexfn/scatter_sc2.fut"
+    ]
+  where
+    mkNoCatTest programFile = testCase (basename programFile) $ do
+      (_, imports, vns) <- readProgramOrDie programFile
+      let last_import = case reverse imports of
+            [] -> error "No imports"
+            x : _ -> x
+      let vbs = getValBinds last_import
+      when (null vbs) $
+        assertFailure "No value bindings found."
+
+      let actuals =
+            fst $ flip runIndexFnM vns $ do
+              let preceding_vbs = init vbs
+              let last_vb = last vbs
+              forM_ preceding_vbs mkIndexFnValBind
+              mkIndexFnValBind last_vb
+
+      when (null actuals) $
+        assertFailure "The last value binding does not create an index function."
+
+      forM_ actuals $ \f -> do
+        unless (not (hasCat f)) $
+          assertFailure $ docStringW 120 $
+            "Expected no Cat domains, but got:\n" <> pretty f
+
+    basename = drop (length prefix)
+      where
+        prefix :: String
+        prefix = "tests/indexfn/"
+
+    getValBinds = mapMaybe getValBind . E.progDecs . fileProg . snd
+
+    getValBind (E.ValDec vb) = Just vb
+    getValBind _ = Nothing
+
+noCatSelectedProgramsTest :: TestTree
+noCatSelectedProgramsTest =
+  testGroup "NoCatSelectedPrograms"
+    [ mkNoCatProgram "tests/indexfn/fft.fut"
+    , mkNoCatProgram "tests/indexfn/map.fut"
+    , mkNoCatProgram "tests/indexfn/scan_lambda.fut"
+    , mkNoCatProgram "tests/indexfn/scatter_sc2.fut"
+    ]
+  where
+    mkNoCatProgram programFile =
+      testCase (basename programFile) $ do
+        (_, imports, vns) <- readProgramOrDie programFile
+        let last_import = case reverse imports of
+              [] -> error "No imports"
+              x : _ -> x
+        let vbs = getValBinds last_import
+        when (null vbs) $
+          assertFailure "No value bindings found."
+
+        -- Same evaluation scheme as mkTest: run all preceding value bindings
+        -- before constructing the last one (same VNameSource).
+        let actuals =
+              fst $ flip runIndexFnM vns $ do
+                let preceding_vbs = init vbs
+                let last_vb = last vbs
+                forM_ preceding_vbs mkIndexFnValBind
+                mkIndexFnValBind last_vb
+
+        when (null actuals) $
+          assertFailure "The last value binding does not create an index function."
+
+        forM_ actuals $ \f -> do
+          unless (not (hasCat f)) $
+            assertFailure $ docStringW 120 $
+              "Expected no Cat domains, but got:\n" <> pretty f
+
+    basename = drop (length prefix)
+      where
+        prefix :: String
+        prefix = "tests/indexfn/"
+
+    getValBinds = mapMaybe getValBind . E.progDecs . fileProg . snd
+
+    getValBind (E.ValDec vb) = Just vb
+    getValBind _ = Nothing
 
 scatterSc2RuleTest :: CatExpectation -> TestTree
 scatterSc2RuleTest expect =
@@ -120,54 +254,6 @@ scatterSc2RuleTest expect =
         assertBool "Expected no Cat domains" (not (hasCat f))
         assertBool "Expected a flattened dimension encoding" (hasFlattenedDim f)
 
-
-catRefactorTestsFile :: TestTree
-catRefactorTestsFile =
-  testGroup "CatRefactorFile"
-    [ mkCatMigrationTest AllowCat "tests/indexfn/scatter_sc2.fut"
-    ]
-  where
-    mkCatMigrationTest expect programFile =
-      testCase (basename programFile) $ do
-        (_, imports, vns) <- readProgramOrDie programFile
-        let last_import = case reverse imports of
-              [] -> error "No imports"
-              x : _ -> x
-        let vbs = getValBinds last_import
-        when (null vbs) $
-          assertFailure "No value bindings found."
-
-        -- Same evaluation scheme as mkTest: run all preceding value bindings
-        -- before constructing the last one (same VNameSource).
-        let actuals =
-              fst $ flip runIndexFnM vns $ do
-                let preceding_vbs = init vbs
-                let last_vb = last vbs
-                forM_ preceding_vbs mkIndexFnValBind
-                mkIndexFnValBind last_vb
-
-        when (null actuals) $
-          assertFailure "The last value binding does not create an index function."
-
-        forM_ actuals $ \f -> case expect of
-          AllowCat ->
-            unless (hasCat f || hasFlattenedDim f) $
-              assertFailure $ docStringW 120 $
-                "Expected Cat encoding OR a flattened dimension encoding, but got:\n"
-                  <> pretty f
-          NoCat -> do
-            assertBool "Expected no Cat domains" (not (hasCat f))
-            assertBool "Expected a flattened dimension encoding" (hasFlattenedDim f)
-
-    basename = drop (length prefix)
-      where
-        prefix :: String
-        prefix = "tests/indexfn/"
-
-    getValBinds = mapMaybe getValBind . E.progDecs . fileProg . snd
-
-    getValBind (E.ValDec vb) = Just vb
-    getValBind _ = Nothing
 
 
 propFlattenTests :: TestTree

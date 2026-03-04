@@ -312,7 +312,7 @@ substituteOnce f g_presub (f_apply, actual_args) = do
                 (CaseCheck (\_ -> bounds $ args M.! i))
                 g_presub
         arg_eq_j `orM` arg_in_segment_bounds
-      _ -> error "Not implemented yet"
+      _ -> error "Not implemented yet (arg_in_segment_of_f on non-1d or non-flat regular dimension)"
 
     -- Apply first matching rule for each dimension in f.
     applySubRules g =
@@ -328,10 +328,10 @@ substituteOnce f g_presub (f_apply, actual_args) = do
       sub0 g
         <|> MaybeT (propFlattenOnce n g f)
         <|> sub1 n g
-        <|> sub2 n g
-        <|> sub3 n g
-        <|> sub4 n g
-        <|> subX n g
+        -- <|> sub2 n g
+        -- <|> sub3 n g
+        -- <|> sub4 n g
+        -- <|> subX n g
 
     -- This is rule is needed because we represent scalars as empty shapes rather
     -- than `for i < 1`, as is done in the paper.

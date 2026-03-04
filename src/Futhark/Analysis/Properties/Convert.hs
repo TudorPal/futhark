@@ -1383,7 +1383,7 @@ scatterSc3 (IndexFn [[Forall i dom_dest]] _) = do
       }
 scatterSc3 _ = fail ""
 
--- Test hook: run scatterSc2 directly.
+-- Test hook: run scatterSc2 directly (without going through source conversion).
 tryScatterSc2 :: IndexFn -> IndexFn -> IndexFn -> IndexFnM (Maybe IndexFn)
 tryScatterSc2 xs is vs = runMaybeT $ scatterSc2 xs is vs
 
