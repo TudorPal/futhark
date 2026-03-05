@@ -147,30 +147,6 @@ solveIx [dim] =
       where
         hole = sym2SoP . Hole
 solveIx _shape = pure
--- XXX This somehow can remove a -1 factor.
--- h1 <- newVName "h"
--- h2 <- newVName "h"
--- h3 <- newVName "h"
--- h4 <- newVName "h"
--- [ Rule
---     { name = "SolveIdx0",
---       from = hole h4 .*. sym2SoP (Ix (hole h1) (hole h2) (hole h3)),
---       to = \s -> do
---         n <- sub s (hole h1)
---         m <- sub s (hole h2)
---         e_idx <- sub s (hole h3)
---         t <- sub s (hole h4)
---         printM 0 ("### t " <> prettyStr t)
---         (t .*.) <$> solveIdx0 dim (Ix n m e_idx),
---       sideCondition = \s -> do
---         n <- sub s (hole h1)
---         m <- sub s (hole h2)
---         e_idx <- sub s (hole h3)
---         solveIdx0sidecond dim (Ix n m e_idx)
---     }
--- ]
--- where
---   hole = sym2SoP . Hole
 
 solveIdx0sidecond :: [Quantified Domain] -> Symbol -> IndexFnM Bool
 solveIdx0sidecond [Forall _ (Iota _), Forall _ (Iota e2)] (Ix _ m e_idx) = do

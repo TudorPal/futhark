@@ -2,19 +2,18 @@ module Futhark.Analysis.Properties.IndexFnTests (tests) where
 
 import Control.Monad (forM, forM_, unless, when)
 import Data.Maybe (mapMaybe)
-import qualified Data.Set as S
 import Futhark.Analysis.Properties.Substitute (propFlattenOnce)
 import Futhark.Analysis.Properties.Convert
 import Futhark.Analysis.Properties.IndexFn
 import Futhark.Analysis.Properties.IndexFnPlus (subIndexFn)
 import Futhark.Analysis.Properties.Monad
-import Futhark.Analysis.Properties.Property (Predicate (..), Property (..))
+-- import Futhark.Analysis.Properties.Property (Predicate (..), Property (..))
 import Futhark.Analysis.Properties.Symbol (Symbol (..), neg)
 import Futhark.Analysis.Properties.Unify (renameSame, unify)
 import Futhark.Compiler.CLI (fileProg, readProgramOrDie)
 import Futhark.MonadFreshNames (newNameFromString)
 import Futhark.SoP.SoP (int2SoP, sym2SoP, (.*.), (.+.), (.-.))
-import Futhark.Util.Pretty (Pretty, docStringW, line, pretty, (<+>), (</>))
+import Futhark.Util.Pretty (Pretty, docStringW, line, pretty, (<+>))
 import Language.Futhark qualified as E
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -1063,7 +1062,7 @@ programTests =
                   body = cases [(Bool True, sym2SoP $ Apply (Hole xs) [sHole i, sHole j])]
                 }
             ]
-       ),
+       )
       -- mkTest
       --   "tests/indexfn/quickhull.fut"
       --   ( pure $ \(i, n, xs, _) ->
