@@ -42,13 +42,13 @@ domainEnd   (Cat {}) = error "Cat domain should be gone (domainEnd)"
 -- domainEnd (Cat k m b) = rep (mkRep k m) b .-. int2SoP 1
 
 intervalStart :: Domain -> SoP Symbol
-intervalStart (Cat {}) = error "Cat domain should be gone (intervalStart)"
--- intervalStart (Cat _ _ b) = b
+-- intervalStart (Cat {}) = error "Cat domain should be gone (intervalStart)"
+intervalStart (Cat _ _ b) = b
 intervalStart (Iota _) = error "intervalStart on iota"
 
 intervalEnd :: Domain -> SoP Symbol
-intervalEnd   (Cat {}) = error "Cat domain should be gone (intervalEnd)"
--- intervalEnd (Cat k _ b) = rep (mkRep k (sym2SoP (Var k) .+. int2SoP 1)) b .-. int2SoP 1
+-- intervalEnd   (Cat {}) = error "Cat domain should be gone (intervalEnd)"
+intervalEnd (Cat k _ b) = rep (mkRep k (sym2SoP (Var k) .+. int2SoP 1)) b .-. int2SoP 1
 intervalEnd (Iota _) = error "intervalEnd on iota"
 
 dimStart :: [Quantified Domain] -> SoP Symbol

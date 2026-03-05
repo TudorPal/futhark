@@ -137,18 +137,10 @@ solveIx [dim] =
         -- ]
         [ Rule
             { name = "SolveNestedSum",
-              from = sym2SoP (Sum (h1) (int2SoP 0) (hole h2) (Apply (Hole h3) [hole h1])) 
-              .-. sym2SoP (Sum (h1) (int2SoP 0) (hole h2 .-. int2SoP 1) (Apply (Hole h3) [hole h1])),
-              to = \s -> error "NEW RULE",
-                -- apply (hole h3) [hole h2]
-                
-                -- do
-                -- n <- sub s (hole h1)
-                -- m <- sub s (hole h2)
-                -- e_idx <- sub s (hole h3)
-                -- t <- sub s (hole h4)
-                -- printM 0 ("### t " <> prettyStr t)
-                -- (t .*.) <$> solveIdx0 dim (Ix n m e_idx),
+              from = sym2SoP (Sum h1 (int2SoP 0) (hole h2) (Apply (Hole h3) [hole h1])) 
+              .-. sym2SoP (Sum h1 (int2SoP 0) (hole h2 .-. int2SoP 1) (Apply (Hole h3) [hole h1])),
+              to = \s -> do
+                sub s $ sym2SoP (Apply (Hole h3) [hole h2]),
               sideCondition = vacuous
             }
         ]
