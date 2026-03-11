@@ -169,10 +169,26 @@ instance FreeVariables (Cases Symbol (SoP Symbol)) where
 
 instance FreeVariables IndexFn where
   fv (IndexFn dims cs) =
-    fv dims <> (fv cs S.\\ S.fromList dims_bound_vars)
+    fv_dims <> (fv cs S.\\ bound_all)
     where
-      dims_bound_vars =
-        map boundVar (concat dims) <> mapMaybe catVar (concat dims)
+      -- flatten the iterator lists so we can fold left to right
+      iters = concat dims
+
+      -- all iterator binders are considered bound in the body
+      bound_all :: S.Set VName
+      bound_all = S.fromList (map boundVar iters)
+
+      -- free vars coming from the iterator domains
+      fv_dims :: S.Set VName
+      fv_dims = snd $ foldl step (S.empty, S.empty) iters
+
+      -- accumulator is bound vars seen so far and free vars collected so far
+      step :: (S.Set VName, S.Set VName) -> Quantified Domain -> (S.Set VName, S.Set VName)
+      step (bound_so_far, fv_acc) (Forall i d) =
+        let bound' = S.insert i bound_so_far
+            -- vars used in the domain minus what is already bound
+            fv_d   = fv d S.\\ bound'
+        in (bound', fv_acc <> fv_d)
 
 -------------------------------------------------------------------------------
 -- Unification.

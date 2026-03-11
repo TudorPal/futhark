@@ -726,50 +726,41 @@ programTests =
       mkTest
         "tests/indexfn/mk_flag_array.fut"
         ( do
-            -- sum binder for the aoa_len expression
-            j <- newNameFromString "j"
+            t <- newNameFromString "t"      -- Sum binder
+            k <- newNameFromString "k"      -- outer iterator
+            j <- newNameFromString "j"      -- inner iterator
+            zero <- newNameFromString "zero"
+            pure $ \(_i, m, xs, shape) ->
+              let sum_mm1 =
+                    sym2SoP $
+                      Sum
+                        t
+                        (int2SoP 0)
+                        (sHole m .-. int2SoP 1)
+                        (Apply (Hole shape) [sVar t])
 
-            -- iterators for the flattened flags representation
-            k <- newNameFromString "k"
-            off <- newNameFromString "i"
-
-            -- Holes for the 2 iota bounds
-            d0 <- newNameFromString "d"
-            d1 <- newNameFromString "d"
-
-            -- hole for the opaque function used after normalisation
-            hf <- newNameFromString "f"
-
-            pure $ \(_i, m, shape, _z) ->
-              [ -- 1) aoa_len: sum_{j=0..m-1} shape[j]
-                IndexFn
-                  { shape = [],
-                    body =
-                      cases
-                        [ ( Bool True,
-                            sym2SoP $
-                              Sum
-                                j
-                                (int2SoP 0)
-                                (sHole m .-. int2SoP 1)
-                                (Apply (Hole shape) [sVar j])
-                          )
-                        ]
-                  },
-
-                -- 2) flags: now represented as a flattened 2-iterator dimension.
-                -- We don't match the internal guard structure here; we match the
-                -- normalised "True => f(k,off)" form that shows up after rewriting.
-                IndexFn
-                  { shape = [[Forall k (Iota (sHole d0)), Forall off (Iota (sHole d1))]],
-                    body =
-                      cases
-                        [ ( Bool True,
-                            sym2SoP $ Apply (Hole hf) [sVar k, sVar off]
-                          )
-                        ]
-                  }
-              ]
+                  inner_len = sym2SoP (Apply (Hole shape) [sVar k])
+              in [ IndexFn
+                      { shape = [],
+                        body = cases [(Bool True, sum_mm1)]
+                      },
+                    IndexFn
+                      { shape =
+                          [ [ Forall k (Iota (sHole m)),
+                              Forall j (Iota inner_len)
+                            ]
+                          ],
+                        body =
+                          cases
+                            [ ( sVar j :== int2SoP 0,
+                                sym2SoP (Apply (Hole xs) [sVar k])
+                              ),
+                              ( sVar j :/= int2SoP 0,
+                                sHole zero
+                              )
+                            ]
+                      }
+                  ]
         ),
       mkTest
         "tests/indexfn/segment_sum.fut"

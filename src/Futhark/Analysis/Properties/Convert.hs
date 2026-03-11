@@ -211,7 +211,11 @@ changeScope newScope f
   | fv (shape f) `S.isSubsetOf` newScope = do
       g <- mkUninterpreted (S.toList newScope) f
       pure $ g {shape = shape f}
-  | otherwise = mkUninterpreted (S.toList newScope) f
+  | otherwise = do
+    --printM 0 $ warningString "changeScope: " <> prettyStr f <> " has free variables out of scope: " <> prettyStr (fv f `S.difference` newScope)
+    printM 0 $ warningString "changeScope: new scope is " <> prettyStr newScope
+    printM 0 $ warningString "free variables: " <> prettyStr (fv f)
+    mkUninterpreted (S.toList newScope) f
 
 mkUninterpreted :: [E.VName] -> IndexFn -> IndexFnM IndexFn
 mkUninterpreted params f = do
