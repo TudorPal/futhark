@@ -12,6 +12,7 @@ import Data.List.NonEmpty qualified as NE
 import Data.Map qualified as M
 import Data.Maybe (catMaybes, fromJust, fromMaybe, isJust, mapMaybe)
 import Data.Set qualified as S
+import Data.Ord (comparing)
 import Futhark.Analysis.Properties.AlgebraBridge (algebraContext, fromAlgebra, simplify, toAlgebra)
 import Futhark.Analysis.Properties.AlgebraBridge.Util
 import Futhark.Analysis.Properties.AlgebraPC.Symbol qualified as Algebra
@@ -212,9 +213,9 @@ changeScope newScope f
       g <- mkUninterpreted (S.toList newScope) f
       pure $ g {shape = shape f}
   | otherwise = do
-    --printM 0 $ warningString "changeScope: " <> prettyStr f <> " has free variables out of scope: " <> prettyStr (fv f `S.difference` newScope)
-    printM 0 $ warningString "changeScope: new scope is " <> prettyStr newScope
-    printM 0 $ warningString "free variables: " <> prettyStr (fv f)
+    -- printM 0 $ warningString "changeScope: " <> prettyStr f <> " has free variables out of scope: " <> prettyStr (fv f `S.difference` newScope)
+    -- printM 0 $ warningString "changeScope: new scope is " <> prettyStr newScope
+    -- printM 0 $ warningString "free variables: " <> prettyStr (fv f)
     mkUninterpreted (S.toList newScope) f
 
 mkUninterpreted :: [E.VName] -> IndexFn -> IndexFnM IndexFn
@@ -1510,14 +1511,24 @@ zipArgsSOAC loc formal_args actual_args = do
   -- Renaming makes sure all Cat k bound in iterators are identical, so that
   -- a new common outer iterator can be used.
   args <- renameSameL (mapM . mapM) =<< mapM forward (getArgs actual_args)
-  let new_outer_dim = maximum $ map (head . shape) (mconcat args)
+  -- let new_outer_dim = maximum $ map (head . shape) (mconcat args)
   -- Transform each arg to use the new common outer iterator.
+  -- args' <- forM args . mapM $ \f -> do
+  --   vn <- newVName "#f"
+  --   let new_shape = new_outer_dim : tail (shape f)
+  --   IndexFn
+  --     { shape = new_shape,
+  --       body = singleCase . sym2SoP $ Apply (Var vn) (map index new_shape)
+  --     }
+  --     @ (vn, f)
+  let new_outer_dim = L.maximumBy (comparing length) $ map (head . shape) (mconcat args)
   args' <- forM args . mapM $ \f -> do
     vn <- newVName "#f"
     let new_shape = new_outer_dim : tail (shape f)
+    let actuals = map (sym2SoP . Var . boundVar) (concat new_shape)
     IndexFn
       { shape = new_shape,
-        body = singleCase . sym2SoP $ Apply (Var vn) (map index new_shape)
+        body = singleCase . sym2SoP $ Apply (Var vn) actuals
       }
       @ (vn, f)
   -- Substitutions may have renamed Cat `k`s; do a common rename again.

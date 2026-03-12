@@ -4,7 +4,7 @@
 module Futhark.Analysis.Properties.Substitute ((@), subst, propFlattenOnce) where
 
 import Control.Applicative ((<|>))
-import Control.Monad (foldM, when, (<=<))
+import Control.Monad (foldM, when, (<=<), zipWithM)
 import Control.Monad.RWS (lift)
 import Control.Monad.Trans.Maybe (MaybeT (..), hoistMaybe, runMaybeT)
 import Data.Functor ((<&>))
@@ -23,7 +23,7 @@ import Futhark.Analysis.Properties.Traversals
 import Futhark.Analysis.Properties.Unify (Rep (..), Replacement, ReplacementBuilder (..), Substitution (..), Unify (..), fv, renameM)
 import Futhark.Analysis.Properties.Util
 import Futhark.MonadFreshNames (newVName)
-import Futhark.SoP.SoP (SoP, int2SoP, justSym, sym2SoP, (.*.), (.+.), (.-.))
+import Futhark.SoP.SoP (SoP(SoP), int2SoP, isConstTerm, justSym, sym2SoP, (.*.), (.+.), (.-.))
 import Futhark.Util.Pretty (prettyString)
 import Language.Futhark (VName)
 
@@ -226,6 +226,259 @@ subber argCheck g = do
 {-
               Substitution rules
 -}
+-- -- Substitute `f(args)` for its value in `g`.
+-- substituteOnce :: IndexFn -> IndexFn -> (Symbol, [SoP Symbol]) -> IndexFnM (Maybe IndexFn)
+-- substituteOnce f g_presub (f_apply, actual_args) = do
+--   vn <- newVName ("<" <> prettyString f_apply <> ">")
+--   g <- repApply vn g_presub
+
+--   -- compute args in the monad because mkArgM uses from1Dto2D which is monadic
+--   args <- mkArgs
+
+--   let new_shape =
+--         shape g
+--           <&> map
+--             ( \case
+--                 Forall j dg
+--                   -- f(args) is not in dom(g).
+--                   | vn `notElem` fv dg -> Forall j dg
+--                   -- f(args) is in dom(g) and f has only one case.
+--                   | Just e_f <- justSingleCase f ->
+--                       Forall j $ repDomain (mkRep vn (rep args e_f)) dg
+--                   -- f(args) is in dom(g) and f has multiple cases.
+--                   | e_f <- flattenCases (body f) ->
+--                       Forall j $ repDomain (mkRep vn (rep args e_f)) dg
+--             )
+--   traverse (simplify <=< solveIx new_shape) <=< applySubRules args $
+--     g
+--       { shape = new_shape,
+--         body = cases $ do
+--           (p_f, e_f) <- guards f
+--           (p_g, e_g) <- guards g
+--           let s = mkRep vn (rep args e_f)
+--           pure (sop2Symbol (rep s p_g) :&& sop2Symbol (rep args p_f), rep s e_g)
+--       }
+--   where
+--     -- Construct replacement from formal arguments of f to actual arguments.
+--     mkArgs :: IndexFnM (Replacement Symbol)
+--     mkArgs =
+--       case actual_args of
+--         []
+--           | [] <- shape f ->
+--               -- All source-program variable references should hit this case.
+--               pure mempty
+--           | [] <- shape g_presub ->
+--               -- This case is a HACK to allow substitution into preconditions.
+--               pure mempty
+--           | rank f == rank g_presub,
+--             map length (shape f) == map length (shape g_presub) -> do
+--               -- This case is a convenience HACK to allow empty arguments in Convert.
+--               let formal_iters = concat (shape f)
+--                   actual_iters = concat (shape g_presub) <&> sym2SoP . Var . boundVar
+--                 in pure $
+--                       mconcat $
+--                         zipWith
+--                           (\(Forall i _) a -> mkRep i a)
+--                           formal_iters
+--                           actual_iters
+--         _
+--           -- iterator wise arguments already provided
+--           | length actual_args == length (concat (shape f)) ->
+--               pure $
+--                 mconcat $
+--                   zipWith
+--                     (\(Forall i _) a -> mkRep i a)
+--                     (concat (shape f))
+--                     actual_args
+
+--           -- dimension wise arguments provided
+--           | rank f == length actual_args -> do
+--               reps <- zipWithM mkArgM (shape f) actual_args
+--               pure $ mconcat reps
+
+--           | otherwise ->
+--               error "Argument mismatch."
+
+--     sumSoP :: VName -> SoP Symbol -> SoP Symbol -> SoP Symbol -> SoP Symbol
+--     sumSoP i lb ub (SoP ts)
+--       | M.null ts = int2SoP 0
+--       | otherwise =
+--           foldl (.+.) (int2SoP 0) [sumTerm term coeff | (term, coeff) <- M.toList ts]
+--       where
+--         sumTerm term coeff
+--           | isConstTerm term =
+--               int2SoP coeff .*. (ub .-. lb .+. int2SoP 1)
+--           | otherwise =
+--               let oneTerm = SoP (M.singleton term 1)
+--               in int2SoP coeff .*. sym2SoP (Sum i lb ub (sop2Symbol oneTerm))
+
+--     mkArgM :: [Quantified Domain] -> SoP Symbol -> IndexFnM (Replacement Symbol)
+--     mkArgM [Forall i _] a =
+--       pure $ mkRep i a
+
+--     mkArgM [d1@(Forall i1 (Iota e2)), d2@(Forall i2 (Iota e3))] eidx
+--       -- rectangular case use the old simplified rule
+--       | i1 `S.notMember` fv e3 =
+--           pure $ mkRepFromList (from1Dto2D d1 d2 eidx)
+
+--       -- dependent inner bound this is the real SubFlat case
+--       | otherwise = do
+--           -- fresh names so we dont accidentally rewrite inside the Ix node
+--           i1' <- newVName "i"
+--           u   <- newVName "u"
+
+--           -- rename i1 inside e3 to i1' for use inside Ix
+--           let e3_ix = rep (mkRep i1 (sym2SoP (Var i1'))) e3
+
+--           -- %D(eidx) represented as Ix e2 e3 eidx
+--           let outer = sym2SoP (Ix e2 e3_ix eidx)
+
+--           -- erow = sum_{u=0}^{outer-1} e3[i1/u]
+--           let e3_u = rep (mkRep i1' (sym2SoP (Var u))) e3_ix
+--           let erow = sumSoP u (int2SoP 0) (outer .-. int2SoP 1) e3_u
+
+--           -- inner = eidx - erow
+--           let inner = eidx .-. erow
+
+--           pure $ mkRep i1 outer <> mkRep i2 inner
+
+--     mkArgM _ _ =
+--       error "nd flatten not implemented yet."
+
+--     repApply vn =
+--       astMap
+--         ( identityMapper
+--             { mapOnSymbol = \e ->
+--                 pure $ if e == f_apply then Var vn else e
+--             }
+--         )
+
+--     -- Side condition for Sub 2 and Sub 3:
+--     -- If f has a segmented domain, is f(arg) inside the k'th segment?
+--     arg_in_segment_of_f args n = case (shape f !! n, shape g_presub !! n) of
+--       ([Forall i df], [Forall j _]) -> do
+--         let arg_eq_j = pure . answerFromBool $ args M.! i == sym2SoP (Var j)
+--         let bounds e = intervalStart df :<= e :&& e :<= intervalEnd df
+--         let arg_in_segment_bounds =
+--               askQ
+--                 (CaseCheck (\_ -> bounds $ args M.! i))
+--                 g_presub
+--         arg_eq_j `orM` arg_in_segment_bounds
+--       _ -> error "Not implemented yet (arg_in_segment_of_f on non-1d or non-flat regular dimension)"
+
+--     -- Apply first matching rule for each dimension in f.
+--     applySubRules args g =
+--       runMaybeT $
+--         if null (shape g)
+--           then subRules args g 0
+--           else foldM (subRules args) g [0 .. rank f - 1]
+
+--     subRules args g n =
+--       sub0 g
+--         <|> MaybeT (propFlattenOnce n g f)
+--         <|> sub1 n g
+--         -- <|> sub2 n g
+--         -- <|> sub3 n g
+--         -- <|> sub4 n g
+--         -- <|> subX n g
+--       where
+--         -- args is currently only used by arg_in_segment_of_f in the old Cat rules
+--         -- keeping it in the signature so it is easy to re-enable those rules safely
+--         _ = arg_in_segment_of_f args
+
+--     -- This is rule is needed because we represent scalars as empty shapes rather
+--     -- than `for i < 1`, as is done in the paper.
+--     sub0 g = case shape f of
+--       [] -> pure g
+--       _ -> fail "No match."
+
+--     -- Propagate flattened domain from f to g.
+--     --
+--     -- TODO this only tries to align the n'th dimension of f with the k'th
+--     -- dimension of g. But we could try any dimension in g.
+--     -- propFlattenSimplified n g | n >= rank g = fail "No match."
+--     -- propFlattenSimplified k g = case (shape g !! k, shape f !! k) of
+--     --   ([Forall i_1 (Iota e_1)], df@[Forall i_2 (Iota e_2), Forall i_3 (Iota e_3)])
+--     --     -- PropFlatten-Simplified from the supplementary material.
+--     --     -- (The case where `e_3` may depend on `i_2` is still handled by Cat in
+--     --     -- this implementation.)
+--     --     | i_2 `S.notMember` fv e_3 -> do
+--     --         printM 1 $ "propFlattenSimplified\n  |_ e_1 " <> prettyStr e_1
+--     --         printM 1 $ "  |_ e_2 " <> prettyStr e_2
+--     --         printM 1 $ "  |_ e_3 " <> prettyStr e_3
+--     --         ans <- lift (e_1 $== e_2 .*. e_3)
+--     --         printM 1 $ "  |_ ans " <> prettyStr ans
+--     --         case ans of
+--     --           Yes -> do
+--     --             e_row <- lift . rewrite $ sym2SoP (Var i_2) .*. e_3
+--     --             printM 1 $ "  |_ e_row " <> prettyStr e_row
+--     --             let s = mkRep i_1 (e_row .+. sym2SoP (Var i_3))
+--     --             let res = g {shape = l <> (df : r), body = repCases s (body g)}
+--     --             printM 1 $ "  |_ g " <> prettyStr res
+--     --             pure res
+--     --             --error "propFlattenSimplified succeeded (I'd like to know first time when getting rid of Cat)"
+--     --           Unknown -> pure g
+--     --     where
+--     --       (l, _old_iter : r) = splitAt k (shape g)
+--     --   _ -> fail "No match."
+
+--     sub1 n g =
+--       if all (\case (Forall _ Iota {}) -> True; _ -> False) (shape f !! n)
+--         then pure g
+--         else fail "No match."
+
+--     -- Propagate Cat domain from f to g.
+--     --
+--     -- TODO this only tries to align the n'th dimension of f with the n'th
+--     -- dimension of g. But we could try any dimension in g.
+--     -- sub2 n g | n >= rank g = fail "No match."
+--     -- sub2 n g = case (shape f !! n, shape g !! n) of
+--     --   ([Forall i df@Cat {}], [Forall j dg@Iota {}]) -> do
+--     --     Yes <- lift (rewrite (domainEnd df) >>= ($== domainEnd dg))
+--     --     Yes <- lift (arg_in_segment_of_f n)
+--     --     pure $ g {shape = l <> [[Forall j (repDomain (mkRep i $ Var j) df)]] <> r}
+--     --     where
+--     --       (l, _old_iter : r) = splitAt n (shape g)
+--     --   _ -> fail "No match."
+
+--     -- f and g's Cat domains unify.
+--     --
+--     -- TODO this only tries to align the n'th dimension of f with the n'th
+--     -- dimension of g. But we could try any dimension in g.
+--     -- sub3 n g | n >= rank g = fail "No match."
+--     -- sub3 n g = case (shape f !! n, shape g !! n) of
+--     --   ([Forall _ df@(Cat k _ _)], [Forall _ dg@(Cat k' _ _)])
+--     --     | k `S.member` fv (body g) -> do
+--     --         True <- lift (df `unifiesWith` dg)
+--     --         Yes <- lift (arg_in_segment_of_f n)
+--     --         pure $ repIndexFn (mkRep k (sym2SoP $ Var k')) g
+--     --   _ -> fail "No match."
+
+--     -- f's Cat domain can be simplified away.
+--     -- sub4 n g = case shape f !! n of
+--     --   [Forall i df@(Cat k _ _)] -> do
+--     --     if k `S.member` fv (body g)
+--     --       then do
+--     --         Just arg <- hoistMaybe . pure $ args M.!? i
+--     --         Just solution <-
+--     --           lift . firstAlt . map (\e_k -> solveFor k e_k arg) $
+--     --             [intervalStart df, intervalEnd df]
+--     --         pure $ repIndexFn (mkRep k solution) g
+--     --       else pure g
+--     --   _ -> fail "No match."
+
+--     -- f's Cat domain handled using II array.
+--     -- subX n g = case shape f !! n of
+--     --   [Forall i df@(Cat k _ _)] | k `S.member` fv (body g) -> do
+--     --     Just arg <- hoistMaybe . pure $ args M.!? i
+--     --     -- Create/lookup II array.
+--     --     let def_II = f {body = cases [(Bool True, sym2SoP (Var k))]}
+--     --     -- Check that f is not already this II array (e.g., defined by the user).
+--     --     Nothing :: Maybe (Substitution Symbol) <- lift $ unify f def_II
+--     --     (vn_II, f_II) <- lift $ lookupII df def_II
+--     --     lift $ insertIndexFn vn_II [f_II]
+--     --     pure (repIndexFn (mkRep k (sym2SoP (Apply (Var vn_II) [arg]))) g)
+--     --   _ -> error "substitution rules non-exhaustive."
 -- Substitute `f(args)` for its value in `g`.
 substituteOnce :: IndexFn -> IndexFn -> (Symbol, [SoP Symbol]) -> IndexFnM (Maybe IndexFn)
 substituteOnce f g_presub (f_apply, actual_args) = do
@@ -281,16 +534,37 @@ substituteOnce f g_presub (f_apply, actual_args) = do
               mconcat . zipWith mkArg (shape f) $
                 concat (shape g_presub) <&> sym2SoP . Var . boundVar
         _
+          | length actual_args == length (concat (shape f)) ->
+              -- iterator-wise arguments (one arg per iterator binder)
+              mconcat $
+                zipWith
+                  (\(Forall i _) a -> mkRep i a)
+                  (concat (shape f))
+                  actual_args
           | rank f == length actual_args ->
-              -- All source-program indexing should hit this case.
+              -- dimension-wise arguments (one arg per dimension)
               mconcat $ zipWith mkArg (shape f) actual_args
           | otherwise ->
               error "Argument mismatch."
 
     mkArg [Forall i _] = mkRep i
-    mkArg [d1, d2] =
-      -- Essentially SubFlat-Simplified from the supplementary material.
-      mkRepFromList . from1Dto2D d1 d2
+    mkArg [d1@(Forall i (Iota n)), d2@(Forall j (Iota m))] =
+      if i `S.member` fv m
+        then \a ->
+          error $
+            "substituteOnce.mkArg: tried to use SubFlat-Simplified on a dependent flattened dimension.\n"
+              <> "  this would call from1Dto2D and crash\n"
+              <> "  f_apply: " <> show f_apply <> "\n"
+              <> "  actual_args length: " <> show (length actual_args) <> "\n"
+              <> "  rank f: " <> show (rank f) <> "\n"
+              <> "  shape f: " <> show (shape f) <> "\n"
+              <> "  shape g_presub: " <> show (shape g_presub) <> "\n"
+              <> "  d1: " <> show d1 <> "\n"
+              <> "  d2: " <> show d2 <> "\n"
+              <> "  flat arg a: " <> show a <> "\n"
+              <> "  note: this usually means some call site collapsed iterators into a single index\n"
+              <> "        look for Apply (Var vn) (map index ...) or similar\n"
+        else mkRepFromList . from1Dto2D d1 d2
     mkArg _ = error "nd flatten not implemented yet."
 
     repApply vn =

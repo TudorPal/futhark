@@ -11,7 +11,7 @@ import Futhark.Analysis.Properties.Monad
 import Futhark.Analysis.Properties.Symbol
 import Futhark.Analysis.Properties.Unify
 import Futhark.MonadFreshNames (newVName)
-import Futhark.SoP.SoP (SoP, int2SoP, sym2SoP, (.*.), (.+.), (.-.))
+import Futhark.SoP.SoP (SoP (SoP), int2SoP, isConstTerm, sym2SoP, (.*.), (.+.), (.-.))
 import Futhark.Util.Pretty (Pretty)
 import Language.Futhark (VName)
 
@@ -20,7 +20,12 @@ from1Dto2D (Forall i (Iota n)) (Forall j (Iota m)) e_idx
   | i `S.notMember` fv m =
       let idx = sym2SoP (Ix n m e_idx)
        in [(i, idx), (j, e_idx .-. idx .*. m)]
-  | otherwise = error "Not implemented yet."
+  | otherwise =
+    error $
+      "from1Dto2D: cannot apply SubFlat-Simplified because inner bound depends on outer iterator.\n"
+        <> "  outer iterator: " <> show i <> "\n"
+        <> "  inner bound m: " <> show m <> "\n"
+        <> "  flat index e_idx: " <> show e_idx <> "\n"
 from1Dto2D _ _ _ = undefined
 
 flatIndices :: [[Quantified Domain]] -> [SoP Symbol]

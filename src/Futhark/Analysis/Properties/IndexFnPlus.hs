@@ -93,13 +93,26 @@ dimEnd _ = error "dont know why it should get here"
 dimSize :: [Quantified Domain] -> SoP Symbol
 dimSize d = dimEnd d .-. dimStart d .+. int2SoP 1
 
+segStart :: VName -> VName -> SoP Symbol -> SoP Symbol
+segStart t k len =
+  let ub = sym2SoP (Var k) .-. int2SoP 1
+      len_t = rep (mkRep k (sym2SoP (Var t))) len
+  in sumSoP t (int2SoP 0) ub len_t
+
 index :: [Quantified Domain] -> SoP Symbol
 index [Forall i _] = sym2SoP (Var i)
 index [Forall i _, Forall j (Iota m)]
   -- Flat regular dimension.
   | i `S.notMember` fv m =
       sym2SoP (Var i) .*. m .+. sym2SoP (Var j)
-index _ = error "Not implemented yet (index on non-1d or non-flat regular dimension)"
+index [Forall k (Iota _m), Forall j (Iota len)]
+  -- segmented flattened dimension
+  -- flat(k,j) = sum_{t=0}^{k-1} len(t) + j
+  | k `S.member` fv len =
+      let t = k
+      in segStart t k len .+. sym2SoP (Var j)
+index _ =
+  error "dont know why it should get here"
 
 -------------------------------------------------------------------------------
 -- Pretty.
