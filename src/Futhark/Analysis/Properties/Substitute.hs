@@ -427,58 +427,58 @@ subber argCheck g = do
 --         then pure g
 --         else fail "No match."
 
---     -- Propagate Cat domain from f to g.
---     --
---     -- TODO this only tries to align the n'th dimension of f with the n'th
---     -- dimension of g. But we could try any dimension in g.
---     -- sub2 n g | n >= rank g = fail "No match."
---     -- sub2 n g = case (shape f !! n, shape g !! n) of
---     --   ([Forall i df@Cat {}], [Forall j dg@Iota {}]) -> do
---     --     Yes <- lift (rewrite (domainEnd df) >>= ($== domainEnd dg))
---     --     Yes <- lift (arg_in_segment_of_f n)
---     --     pure $ g {shape = l <> [[Forall j (repDomain (mkRep i $ Var j) df)]] <> r}
---     --     where
---     --       (l, _old_iter : r) = splitAt n (shape g)
---     --   _ -> fail "No match."
+    -- Propagate Cat domain from f to g.
+    --
+    -- TODO this only tries to align the n'th dimension of f with the n'th
+    -- dimension of g. But we could try any dimension in g.
+    -- sub2 n g | n >= rank g = fail "No match."
+    -- sub2 n g = case (shape f !! n, shape g !! n) of
+    --   ([Forall i df@Cat {}], [Forall j dg@Iota {}]) -> do
+    --     Yes <- lift (rewrite (domainEnd df) >>= ($== domainEnd dg))
+    --     Yes <- lift (arg_in_segment_of_f n)
+    --     pure $ g {shape = l <> [[Forall j (repDomain (mkRep i $ Var j) df)]] <> r}
+    --     where
+    --       (l, _old_iter : r) = splitAt n (shape g)
+    --   _ -> fail "No match."
 
---     -- f and g's Cat domains unify.
---     --
---     -- TODO this only tries to align the n'th dimension of f with the n'th
---     -- dimension of g. But we could try any dimension in g.
---     -- sub3 n g | n >= rank g = fail "No match."
---     -- sub3 n g = case (shape f !! n, shape g !! n) of
---     --   ([Forall _ df@(Cat k _ _)], [Forall _ dg@(Cat k' _ _)])
---     --     | k `S.member` fv (body g) -> do
---     --         True <- lift (df `unifiesWith` dg)
---     --         Yes <- lift (arg_in_segment_of_f n)
---     --         pure $ repIndexFn (mkRep k (sym2SoP $ Var k')) g
---     --   _ -> fail "No match."
+    -- f and g's Cat domains unify.
+    --
+    -- TODO this only tries to align the n'th dimension of f with the n'th
+    -- dimension of g. But we could try any dimension in g.
+    -- sub3 n g | n >= rank g = fail "No match."
+    -- sub3 n g = case (shape f !! n, shape g !! n) of
+    --   ([Forall _ df@(Cat k _ _)], [Forall _ dg@(Cat k' _ _)])
+    --     | k `S.member` fv (body g) -> do
+    --         True <- lift (df `unifiesWith` dg)
+    --         Yes <- lift (arg_in_segment_of_f n)
+    --         pure $ repIndexFn (mkRep k (sym2SoP $ Var k')) g
+    --   _ -> fail "No match."
 
---     -- f's Cat domain can be simplified away.
---     -- sub4 n g = case shape f !! n of
---     --   [Forall i df@(Cat k _ _)] -> do
---     --     if k `S.member` fv (body g)
---     --       then do
---     --         Just arg <- hoistMaybe . pure $ args M.!? i
---     --         Just solution <-
---     --           lift . firstAlt . map (\e_k -> solveFor k e_k arg) $
---     --             [intervalStart df, intervalEnd df]
---     --         pure $ repIndexFn (mkRep k solution) g
---     --       else pure g
---     --   _ -> fail "No match."
+    -- f's Cat domain can be simplified away.
+    -- sub4 n g = case shape f !! n of
+    --   [Forall i df@(Cat k _ _)] -> do
+    --     if k `S.member` fv (body g)
+    --       then do
+    --         Just arg <- hoistMaybe . pure $ args M.!? i
+    --         Just solution <-
+    --           lift . firstAlt . map (\e_k -> solveFor k e_k arg) $
+    --             [intervalStart df, intervalEnd df]
+    --         pure $ repIndexFn (mkRep k solution) g
+    --       else pure g
+    --   _ -> fail "No match."
 
---     -- f's Cat domain handled using II array.
---     -- subX n g = case shape f !! n of
---     --   [Forall i df@(Cat k _ _)] | k `S.member` fv (body g) -> do
---     --     Just arg <- hoistMaybe . pure $ args M.!? i
---     --     -- Create/lookup II array.
---     --     let def_II = f {body = cases [(Bool True, sym2SoP (Var k))]}
---     --     -- Check that f is not already this II array (e.g., defined by the user).
---     --     Nothing :: Maybe (Substitution Symbol) <- lift $ unify f def_II
---     --     (vn_II, f_II) <- lift $ lookupII df def_II
---     --     lift $ insertIndexFn vn_II [f_II]
---     --     pure (repIndexFn (mkRep k (sym2SoP (Apply (Var vn_II) [arg]))) g)
---     --   _ -> error "substitution rules non-exhaustive."
+    -- f's Cat domain handled using II array.
+    -- subX n g = case shape f !! n of
+    --   [Forall i df@(Cat k _ _)] | k `S.member` fv (body g) -> do
+    --     Just arg <- hoistMaybe . pure $ args M.!? i
+    --     -- Create/lookup II array.
+    --     let def_II = f {body = cases [(Bool True, sym2SoP (Var k))]}
+    --     -- Check that f is not already this II array (e.g., defined by the user).
+    --     Nothing :: Maybe (Substitution Symbol) <- lift $ unify f def_II
+    --     (vn_II, f_II) <- lift $ lookupII df def_II
+    --     lift $ insertIndexFn vn_II [f_II]
+    --     pure (repIndexFn (mkRep k (sym2SoP (Apply (Var vn_II) [arg]))) g)
+    --   _ -> error "substitution rules non-exhaustive."
 -- Substitute `f(args)` for its value in `g`.
 substituteOnce :: IndexFn -> IndexFn -> (Symbol, [SoP Symbol]) -> IndexFnM (Maybe IndexFn)
 substituteOnce f g_presub (f_apply, actual_args) = do
@@ -562,8 +562,6 @@ substituteOnce f g_presub (f_apply, actual_args) = do
               <> "  d1: " <> show d1 <> "\n"
               <> "  d2: " <> show d2 <> "\n"
               <> "  flat arg a: " <> show a <> "\n"
-              <> "  note: this usually means some call site collapsed iterators into a single index\n"
-              <> "        look for Apply (Var vn) (map index ...) or similar\n"
         else mkRepFromList . from1Dto2D d1 d2
     mkArg _ = error "nd flatten not implemented yet."
 

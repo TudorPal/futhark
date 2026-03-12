@@ -29,6 +29,7 @@ import Futhark.Analysis.Properties.Unify (FreeVariables (..), Renameable (..), R
 import Futhark.Analysis.Properties.Util (prettyName)
 import Futhark.SoP.SoP (SoP (SoP), int2SoP, isConstTerm, sym2SoP, (.*.), (.+.), (.-.))
 import Futhark.Util.Pretty (Pretty (pretty), align, comma, commastack, hang, indent, line, parens, punctuate, sep, softline, stack, (<+>), (</>))
+import Futhark.MonadFreshNames (newVName)
 import Language.Futhark (VName)
 
 domainStart :: Domain -> SoP Symbol
@@ -113,6 +114,33 @@ index [Forall k (Iota _m), Forall j (Iota len)]
       in segStart t k len .+. sym2SoP (Var j)
 index _ =
   error "dont know why it should get here"
+
+-- in the original `index` function we wrote `let t = k`, but that is wrong 
+-- because `t` is supposed to be the loop variable inside the sum, while `k` 
+-- is the segment index from the outside. the `Sum` expression binds its loop variable, 
+-- so if we reuse the name `k` then the sum ends up binding `k` and it shadows 
+-- the outer `k`. with a monadic `indexM` function we can create a fresh name for the sum binder, 
+-- like `t <- newVName "t"`. then we can safely build the expression `sum_{t=0}^{k-1} len(t) + j`
+-- without any name clashes, because `t` is guaranteed to be different from `k`.
+
+indexM :: [Quantified Domain] -> IndexFnM (SoP Symbol)
+indexM [Forall i _] =
+  pure $ sym2SoP (Var i)
+indexM [Forall i _, Forall j (Iota m)]
+  -- flat regular dimension
+  | i `S.notMember` fv m =
+      pure $ sym2SoP (Var i) .*. m .+. sym2SoP (Var j)
+indexM [Forall k (Iota _m), Forall j (Iota len)]
+  -- segmented flattened dimension
+  -- flat(k,j) = sum_{t=0}^{k-1} len(t) + j
+  | k `S.member` fv len = do
+      t <- newVName "t"
+      let ub = sym2SoP (Var k) .-. int2SoP 1
+      let len_t = rep (mkRep k (sym2SoP (Var t))) len
+      let start = sumSoP t (int2SoP 0) ub len_t
+      pure $ start .+. sym2SoP (Var j)
+indexM ds =
+  error $ "indexM: not implemented for dimension " <> show ds
 
 -------------------------------------------------------------------------------
 -- Pretty.
