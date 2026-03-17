@@ -1,6 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 
-module Futhark.Analysis.Properties.Flatten (lookupII, from1Dto2D, unflatten) where
+module Futhark.Analysis.Properties.Flatten (lookupII, from1Dto2D, from1Dto2DM, unflatten) where
 
 import Data.List (tails)
 import Data.Map qualified as M
@@ -30,29 +30,35 @@ from1Dto2D (Forall i (Iota n)) (Forall j (Iota m)) e_idx
 from1Dto2D _ _ _ = undefined
 
 from1Dto2DM :: Quantified Domain -> Quantified Domain -> SoP Symbol -> IndexFnM [(VName, SoP Symbol)]
-from1Dto2DM (Forall i1 (Iota e2)) (Forall i2 (Iota e3)) eidx
+from1Dto2DM (Forall i1 (Iota e2)) (Forall i2 (Iota e3)) e_idx
   | i1 `S.notMember` fv e3 =
-      let outer = sym2SoP (Ix e2 e3 eidx)
-       in pure [(i1, outer), (i2, eidx .-. outer .*. e3)]
+      let outer = sym2SoP (Ix e2 e3 e_idx)
+       in pure [(i1, outer), (i2, e_idx .-. outer .*. e3)]
 
   | otherwise = do
+      printM 1 "from1Dto2D irregular start"
+      printM 1 $ "  eidx: " <> prettyStr e_idx
+
       j <- newVName "j"
 
       -- row start as a function of i1
       let ub    = sym2SoP (Var i1) .-. int2SoP 1
       let e3_j  = rep (mkRep i1 (sym2SoP (Var j))) e3
+      printM 1 "  before eRow"
       let eRow  = sumSoP j (int2SoP 0) ub e3_j
+      printM 1 "  after eRow"
 
-      -- %D(eidx)
-      let outer = sym2SoP (Ix e2 e3 eidx)
+      -- %D(e_idx)
+      let outer = sym2SoP (Ix e2 e3 e_idx)
 
-      -- eRow[%D(eidx) / i1]
+      -- eRow[%D(e_idx) / i1]
       let eRowOuter = rep (mkRep i1 outer) eRow
 
       pure
         [ (i1, outer)
-        , (i2, eidx .-. eRowOuter)
+        , (i2, e_idx .-. eRowOuter)
         ]
+from1Dto2DM _ _ _ = undefined
 
 flatIndices :: [[Quantified Domain]] -> [SoP Symbol]
 flatIndices = map flattenIndex
