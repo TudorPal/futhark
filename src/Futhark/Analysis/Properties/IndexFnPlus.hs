@@ -30,6 +30,7 @@ import Futhark.Analysis.Properties.Util (prettyName)
 import Futhark.SoP.SoP (SoP (SoP), int2SoP, isConstTerm, sym2SoP, (.*.), (.+.), (.-.))
 import Futhark.Util.Pretty (Pretty (pretty), align, comma, commastack, hang, indent, line, parens, punctuate, sep, softline, stack, (<+>), (</>))
 import Futhark.MonadFreshNames (newVName)
+import Futhark.Analysis.Properties.SoPUtil (sumSoP)
 import Language.Futhark (VName)
 
 domainStart :: Domain -> SoP Symbol
@@ -55,25 +56,6 @@ intervalEnd (Iota _) = error "intervalEnd on iota"
 dimStart :: [Quantified Domain] -> SoP Symbol
 dimStart [] = undefined
 dimStart (dim : _) = domainStart (formula dim)
-
-sumSoP :: VName -> SoP Symbol -> SoP Symbol -> SoP Symbol -> SoP Symbol
-sumSoP i lb ub (SoP ts)
-  | M.null ts = int2SoP 0
-  | otherwise =
-      foldl
-        (.+.)
-        (int2SoP 0)
-        [ sumTerm term coeff | (term, coeff) <- M.toList ts
-        ]
-  where
-    -- Sum over a single SoP term.
-    -- If the term is constant 1, then sum_{i=lb}^{ub-1} 1 = ub-lb.
-    sumTerm term coeff
-      | isConstTerm term =
-          int2SoP coeff .*. (ub .-. lb .+. int2SoP 1)
-      | otherwise =
-          let oneTerm = SoP (M.singleton term 1)
-           in int2SoP coeff .*. sym2SoP (Sum i lb ub (sop2Symbol oneTerm))
 
 dimEnd :: [Quantified Domain] -> SoP Symbol
 dimEnd [] = undefined
@@ -109,6 +91,7 @@ index [Forall i _, Forall j (Iota m)]
 index [Forall k (Iota _m), Forall j (Iota len)]
   -- segmented flattened dimension
   -- flat(k,j) = sum_{t=0}^{k-1} len(t) + j
+  -- sum_{k=0}^{k-1} len(k)
   | k `S.member` fv len =
       let t = k
       in segStart t k len .+. sym2SoP (Var j)

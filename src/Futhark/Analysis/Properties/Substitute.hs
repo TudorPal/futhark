@@ -22,6 +22,7 @@ import Futhark.Analysis.Properties.Symbol
 import Futhark.Analysis.Properties.Traversals
 import Futhark.Analysis.Properties.Unify (Rep (..), Replacement, ReplacementBuilder (..), Substitution (..), Unify (..), fv, renameM)
 import Futhark.Analysis.Properties.Util
+import Futhark.Analysis.Properties.SoPUtil (sumSoP)
 import Futhark.MonadFreshNames (newVName)
 import Futhark.SoP.SoP (SoP(SoP), int2SoP, isConstTerm, justSym, sym2SoP, (.*.), (.+.), (.-.))
 import Futhark.Util.Pretty (prettyString)
@@ -100,6 +101,13 @@ subst indexfn = do
   g <- renameM indexfn
   subber (legalArg k g) g
 
+mkERow :: VName -> SoP Symbol -> IndexFnM (SoP Symbol)
+mkERow i2 e3 = do
+  j <- newVName "j"
+  let ub   = sym2SoP (Var i2) .-. int2SoP 1
+  let e3_j = rep (mkRep i2 (sym2SoP (Var j))) e3
+  pure $ sumSoP j (int2SoP 0) ub e3_j
+
 -- Try to apply PropFlatten on dimension k, propagating a flattened domain
 -- from f to g.
 --
@@ -127,32 +135,42 @@ propFlattenOnce k g f = runMaybeT $ do
                 pure $ g {shape = l <> (df : r), body = repCases s (body g)}
               Unknown -> pure g
           else do
-            -- Recognise the common segmented pattern:
-            --   e3 == e[i2+1] - e[i2]
-            --   e1 == e[e2]
-            hE <- lift $ newVName "e"
-            let i2S = sym2SoP (Var i2)
-            let patE3 =
-                  sym2SoP (Apply (Hole hE) [i2S .+. int2SoP 1])
-                    .-. sym2SoP (Apply (Hole hE) [i2S])
+            eRow <- lift $ mkERow i2 e3
+            end  <- lift . rewrite $ rep (mkRep i2 e2) eRow
+            ans  <- lift (e1 $== end)
+            case ans of
+              Yes -> do
+                let s = mkRep i1 (eRow .+. sym2SoP (Var i3))
+                let (l, _old : r) = splitAt k (shape g)
+                pure $ g { shape = l <> (df : r), body = repCases s (body g) }
+              Unknown -> pure g
+          -- else do
+          --   -- Recognise the common segmented pattern:
+          --   --   e3 == e[i2+1] - e[i2]
+          --   --   e1 == e[e2]
+          --   hE <- lift $ newVName "e"
+          --   let i2S = sym2SoP (Var i2)
+          --   let patE3 =
+          --         sym2SoP (Apply (Hole hE) [i2S .+. int2SoP 1])
+          --           .-. sym2SoP (Apply (Hole hE) [i2S])
 
-            mSub <- lift $ unify patE3 e3
-            case mSub of
-              Nothing -> pure g
-              Just sUnify -> do
-                eSop <- hoistMaybe $ mapping sUnify M.!? hE
-                eSym <- hoistMaybe $ justSym eSop
-                eVn  <- hoistMaybe $ justVar eSym
+          --   mSub <- lift $ unify patE3 e3
+          --   case mSub of
+          --     Nothing -> pure g
+          --     Just sUnify -> do
+          --       eSop <- hoistMaybe $ mapping sUnify M.!? hE
+          --       eSym <- hoistMaybe $ justSym eSop
+          --       eVn  <- hoistMaybe $ justVar eSym
 
-                let end = sym2SoP (Apply (Var eVn) [e2])
-                ans <- lift (e1 $== end)
-                case ans of
-                  Yes -> do
-                    let start = sym2SoP (Apply (Var eVn) [sym2SoP (Var i2)])
-                    let s = mkRep i1 (start .+. sym2SoP (Var i3))
-                    let (l, _old : r) = splitAt k (shape g)
-                    pure $ g {shape = l <> (df : r), body = repCases s (body g)}
-                  Unknown -> pure g
+          --       let end = sym2SoP (Apply (Var eVn) [e2])
+          --       ans <- lift (e1 $== end)
+          --       case ans of
+          --         Yes -> do
+          --           let start = sym2SoP (Apply (Var eVn) [sym2SoP (Var i2)])
+          --           let s = mkRep i1 (start .+. sym2SoP (Var i3))
+          --           let (l, _old : r) = splitAt k (shape g)
+          --           pure $ g {shape = l <> (df : r), body = repCases s (body g)}
+          --         Unknown -> pure g
       _ -> fail "No match."
 
 -- Are you substituting xs[i] for xs = for i < e . true => xs[i]?
@@ -298,19 +316,6 @@ subber argCheck g = do
 
 --           | otherwise ->
 --               error "Argument mismatch."
-
---     sumSoP :: VName -> SoP Symbol -> SoP Symbol -> SoP Symbol -> SoP Symbol
---     sumSoP i lb ub (SoP ts)
---       | M.null ts = int2SoP 0
---       | otherwise =
---           foldl (.+.) (int2SoP 0) [sumTerm term coeff | (term, coeff) <- M.toList ts]
---       where
---         sumTerm term coeff
---           | isConstTerm term =
---               int2SoP coeff .*. (ub .-. lb .+. int2SoP 1)
---           | otherwise =
---               let oneTerm = SoP (M.singleton term 1)
---               in int2SoP coeff .*. sym2SoP (Sum i lb ub (sop2Symbol oneTerm))
 
 --     mkArgM :: [Quantified Domain] -> SoP Symbol -> IndexFnM (Replacement Symbol)
 --     mkArgM [Forall i _] a =
@@ -554,14 +559,14 @@ substituteOnce f g_presub (f_apply, actual_args) = do
           error $
             "substituteOnce.mkArg: tried to use SubFlat-Simplified on a dependent flattened dimension.\n"
               <> "  this would call from1Dto2D and crash\n"
-              <> "  f_apply: " <> show f_apply <> "\n"
-              <> "  actual_args length: " <> show (length actual_args) <> "\n"
-              <> "  rank f: " <> show (rank f) <> "\n"
-              <> "  shape f: " <> show (shape f) <> "\n"
-              <> "  shape g_presub: " <> show (shape g_presub) <> "\n"
-              <> "  d1: " <> show d1 <> "\n"
-              <> "  d2: " <> show d2 <> "\n"
-              <> "  flat arg a: " <> show a <> "\n"
+              <> "  f_apply: " <> prettyStr f_apply <> "\n"
+              <> "  actual_args length: " <> prettyStr (length actual_args) <> "\n"
+              <> "  rank f: " <> prettyStr (rank f) <> "\n"
+              <> "  shape f: " <> prettyStr (shape f) <> "\n"
+              <> "  shape g_presub: " <> prettyStr (shape g_presub) <> "\n"
+              <> "  d1: " <> prettyStr d1 <> "\n"
+              <> "  d2: " <> prettyStr d2 <> "\n"
+              <> "  flat arg a: " <> prettyStr a <> "\n"
         else mkRepFromList . from1Dto2D d1 d2
     mkArg _ = error "nd flatten not implemented yet."
 

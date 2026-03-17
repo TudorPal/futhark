@@ -159,6 +159,7 @@ library
       Futhark.Analysis.Properties.Traversals
       Futhark.Analysis.Properties.Unify
       Futhark.Analysis.Properties.Util
+      Futhark.Analysis.Properties.SoPUtil
       Futhark.Analysis.Properties.AlgebraPC.Algebra
       Futhark.Analysis.Properties.AlgebraPC.All2AllDriver
       Futhark.Analysis.Properties.AlgebraPC.BinaryRules

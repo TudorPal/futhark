@@ -10,6 +10,7 @@ import Futhark.Analysis.Properties.IndexFnPlus ()
 import Futhark.Analysis.Properties.Monad
 import Futhark.Analysis.Properties.Symbol
 import Futhark.Analysis.Properties.Unify
+import Futhark.Analysis.Properties.SoPUtil (sumSoP)
 import Futhark.MonadFreshNames (newVName)
 import Futhark.SoP.SoP (SoP (SoP), int2SoP, isConstTerm, sym2SoP, (.*.), (.+.), (.-.))
 import Futhark.Util.Pretty (Pretty)
@@ -27,6 +28,31 @@ from1Dto2D (Forall i (Iota n)) (Forall j (Iota m)) e_idx
         <> "  inner bound m: " <> show m <> "\n"
         <> "  flat index e_idx: " <> show e_idx <> "\n"
 from1Dto2D _ _ _ = undefined
+
+from1Dto2DM :: Quantified Domain -> Quantified Domain -> SoP Symbol -> IndexFnM [(VName, SoP Symbol)]
+from1Dto2DM (Forall i1 (Iota e2)) (Forall i2 (Iota e3)) eidx
+  | i1 `S.notMember` fv e3 =
+      let outer = sym2SoP (Ix e2 e3 eidx)
+       in pure [(i1, outer), (i2, eidx .-. outer .*. e3)]
+
+  | otherwise = do
+      j <- newVName "j"
+
+      -- row start as a function of i1
+      let ub    = sym2SoP (Var i1) .-. int2SoP 1
+      let e3_j  = rep (mkRep i1 (sym2SoP (Var j))) e3
+      let eRow  = sumSoP j (int2SoP 0) ub e3_j
+
+      -- %D(eidx)
+      let outer = sym2SoP (Ix e2 e3 eidx)
+
+      -- eRow[%D(eidx) / i1]
+      let eRowOuter = rep (mkRep i1 outer) eRow
+
+      pure
+        [ (i1, outer)
+        , (i2, eidx .-. eRowOuter)
+        ]
 
 flatIndices :: [[Quantified Domain]] -> [SoP Symbol]
 flatIndices = map flattenIndex

@@ -300,51 +300,71 @@ propFlattenTests =
 
         actual @??= expected
 
-    , testCase "segmented i1 := e[i2] + i3 (e3 == e[i2+1]-e[i2])" $ do
-        (_, _, vns) <- readProgramOrDie "tests/indexfn/map.fut"
-        let (mg', expected, _i1) =
-              fst $ flip runIndexFnM vns $ do
-                i1 <- newNameFromString "i1"
-                i2 <- newNameFromString "i2"
-                i3 <- newNameFromString "i3"
-                m  <- newNameFromString "m"
-                e  <- newNameFromString "e"
+    , testCase "segmented PropFlatten uses row-start sum" $ do
+      (_, _, vns) <- readProgramOrDie "tests/indexfn/map.fut"
+      let (mg', expected, _i1) =
+            fst $ flip runIndexFnM vns $ do
+              i1 <- newNameFromString "i1"
+              i2 <- newNameFromString "i2"
+              i3 <- newNameFromString "i3"
+              m  <- newNameFromString "m"
+              t  <- newNameFromString "t"
+              shape <- newNameFromString "shape"
+              j  <- newNameFromString "j"
 
-                let e2 = sym2SoP (Var m)
-                let i2S = sym2SoP (Var i2)
+              let e2 = sym2SoP (Var m)
+              let i2S = sym2SoP (Var i2)
 
-                let eAt t = sym2SoP (Apply (Var e) [t])
+              let shapeAt x = sym2SoP (Apply (Var shape) [x])
 
-                let e3 = eAt (i2S .+. int2SoP 1) .-. eAt i2S
-                let e1 = eAt e2
+              let e3 = shapeAt i2S
+              let e1 =
+                    sym2SoP $
+                      Sum
+                        t
+                        (int2SoP 0)
+                        (e2 .-. int2SoP 1)
+                        (Apply (Var shape) [sym2SoP (Var t)])
 
-                let g =
-                      IndexFn
-                        { shape = [[Forall i1 (Iota e1)]]
-                        , body  = cases [(Bool True, sym2SoP (Var i1))]
-                        }
+              let g =
+                    IndexFn
+                      { shape = [[Forall i1 (Iota e1)]]
+                      , body  = cases [(Bool True, sym2SoP (Var i1))]
+                      }
 
-                let f =
-                      IndexFn
-                        { shape = [[Forall i2 (Iota e2), Forall i3 (Iota e3)]]
-                        , body  = cases [(Bool True, sym2SoP (Var i3))]
-                        }
+              let f =
+                    IndexFn
+                      { shape = [[Forall i2 (Iota e2), Forall i3 (Iota e3)]]
+                      , body  = cases [(Bool True, sym2SoP (Var i3))]
+                      }
 
-                mg' <- propFlattenOnce 0 g f
+              mg' <- propFlattenOnce 0 g f
 
-                let expected =
-                      IndexFn
-                        { shape = [[Forall i2 (Iota e2), Forall i3 (Iota e3)]]
-                        , body  = cases [(Bool True, eAt i2S .+. sym2SoP (Var i3))]
-                        }
+              let eRow =
+                    sym2SoP $
+                      Sum
+                        j
+                        (int2SoP 0)
+                        (i2S .-. int2SoP 1)
+                        (Apply (Var shape) [sym2SoP (Var j)])
 
-                pure (mg', expected, i1)
+              let expected =
+                    IndexFn
+                      { shape = [[Forall i2 (Iota e2), Forall i3 (Iota e3)]]
+                      , body  = cases [(Bool True, eRow .+. sym2SoP (Var i3))]
+                      }
 
-        actual <- case mg' of
-          Nothing -> assertFailure "propFlattenOnce did not apply (got Nothing)" >> error "unreachable"
-          Just g' -> pure g'
+              pure (mg', expected, i1)
 
-        actual @??= expected
+      actual <- case mg' of
+        Nothing -> assertFailure "propFlattenOnce did not apply (got Nothing)" >> error "unreachable"
+        Just g' -> pure g'
+
+      let (actual', expected') =
+            fst $ flip runIndexFnM vns $
+              renameSame actual expected
+
+      actual' @??= expected'
     ]
 
 programTests :: TestTree
