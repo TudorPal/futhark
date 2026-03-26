@@ -800,9 +800,17 @@ programTests =
       mkTest
         "tests/indexfn/segment_ids.fut"
         ( pure $ \(i, m, k, b) ->
-            [ IndexFn
-                { shape = [[Forall i (Cat k (sHole m) (sHole b))]],
-                  body = cases [(Bool True, sHole k)]
+            [ 
+              -- IndexFn
+              --   { shape = [[Forall i (Cat k (sHole m) (sHole b))]],
+              --     body = cases [(Bool True, sHole k)]
+              --   }
+              IndexFn
+                { shape =
+                    [[ Forall k (Iota (sHole m))
+                    , Forall i (Iota (sym2SoP (Apply (Hole b) [sym2SoP (Var k)])))
+                    ]],
+                  body = cases [(Bool True, sym2SoP (Var k))]
                 }
             ]
         ),

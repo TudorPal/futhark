@@ -264,6 +264,59 @@ rulesIndexFn = do
             pure $ Recurrence `notElem` (b_symbols <> e1_symbols)
         },
       Rule
+        { name = "Rule 5 (carry) (flat 2D)",
+          -- y = ∀k < m, i < b(k) .
+          --    | i == 0  => e1
+          --    | i /= 0  => y[i-1]
+          -- ___________________________________________
+          -- y = ∀k < m, i < b(k) . {i -> 0} e1
+          from =
+            IndexFn
+              { shape = [[Forall k (Iota (hole m)), Forall i (Iota (hole b))]],
+                body =
+                  cases
+                    [ (hole i :== int 0, hole h1),
+                      (hole i :/= int 0, sym2SoP Recurrence)
+                    ]
+              },
+          to = \s ->
+            subIndexFn s =<< do
+              let i' = repVName (mapping s) i
+              e1 <- sub s (hole h1)
+              let e1_0 = rep (mkRep i' (int 0)) e1
+              pure $
+                IndexFn
+                  { shape = [[Forall k (Iota (hole m)), Forall i (Iota (hole b))]],
+                    body = cases [(Bool True, e1_0)]
+                  },
+          sideCondition = vacuous
+        },
+      Rule
+        { name = "Rule 5 (carry) (flat 2D) (case order switched)",
+          from =
+            IndexFn
+              { shape = [[Forall k (Iota (hole m)), Forall i (Iota (hole b))]],
+                body =
+                  cases
+                    [ (hole i :/= int 0, sym2SoP Recurrence),
+                      (hole i :== int 0, hole h1)
+                    ]
+              },
+          to = \s ->
+            subIndexFn s =<< do
+              let i' = repVName (mapping s) i
+              e1 <- sub s (hole h1)
+              let e1_0 = rep (mkRep i' (int 0)) e1
+              pure $
+                IndexFn
+                  { shape = [[Forall k (Iota (hole m)), Forall i (Iota (hole b))]],
+                    body = cases [(Bool True, e1_0)]
+                  },
+          sideCondition = \s -> do
+            e1_symbols <- concatMap fst . sopToLists <$> sub s (Hole h1)
+            pure $ Recurrence `notElem` e1_symbols
+        },
+      Rule
         { name = "Prefix sum",
           -- y = ∀i ∈ [b, b+1, ..., b + n - 1] .
           --    | i == b => e1              (e1 may depend on i)
