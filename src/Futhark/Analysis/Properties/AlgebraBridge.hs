@@ -35,12 +35,16 @@ or' m1 m2 = do
 
 -- | Simplify symbols using algebraic solver.
 simplify :: (ASTMappable Symbol a) => a -> IndexFnM a
-simplify = astMap m
+simplify x = do
+  -- printM 1 "simplify start"
+  res <- astMap m x
+  -- printM 1 "simplify done"
+  pure res
   where
     m :: ASTMapper Symbol IndexFnM =
       ASTMapper
-        { mapOnSymbol = simplifySymbol . toDNF,
-          mapOnSoP = simplifyAlgebra <=< applyRuleBook rulesSoP
+        { mapOnSymbol = simplifySymbol . toDNF
+        ,  mapOnSoP = simplifyAlgebra <=< applyRuleBook rulesSoP
         }
 
     rulesSoP :: IndexFnM [Rule (SoP Symbol) Symbol IndexFnM]
@@ -71,9 +75,14 @@ simplify = astMap m
 
     simplifyAlgebra :: SoP Symbol -> IndexFnM (SoP Symbol)
     simplifyAlgebra x = rollbackAlgEnv $ do
+      -- printM 1 $ "simplifyAlgebra in=" <> prettyStr x
       y <- toAlgebra x
+      -- printM 1 "simplifyAlgebra after toAlgebra"
       z <- Algebra.simplify y
-      fromAlgebra z
+      -- printM 1 "simplifyAlgebra after Algebra.simplify"
+      r <- fromAlgebra z
+      -- printM 1 $ "simplifyAlgebra out=" <> prettyStr r
+      pure r
 
     simplifySymbol :: Symbol -> IndexFnM Symbol
     simplifySymbol symbol = case symbol of
@@ -168,11 +177,14 @@ simplify = astMap m
     contradiction2 _ = pure Nothing
 
     refine relation = do
+      -- printM 1 $ "simplifySymbol refine relation=" <> prettyStr relation
       b <- solve relation
+      -- printM 1 $ "simplifySymbol solve result=" <> prettyStr b
       case b of
         Yes -> pure $ Bool True
         Unknown -> do
           not_b <- solve (neg relation)
+          -- printM 1 $ "simplifySymbol neg solve result=" <> prettyStr not_b
           case not_b of
             Yes -> pure $ Bool False
             Unknown -> pure relation

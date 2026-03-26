@@ -1,6 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 
-module Futhark.Analysis.Properties.Flatten (lookupII, from1Dto2D, from1Dto2DM, unflatten) where
+module Futhark.Analysis.Properties.Flatten (lookupII, from1Dto2D, from1Dto2DM, unflatten, mkERow) where
 
 import Data.List (tails)
 import Data.Map qualified as M
@@ -15,6 +15,13 @@ import Futhark.MonadFreshNames (newVName)
 import Futhark.SoP.SoP (SoP (SoP), int2SoP, isConstTerm, sym2SoP, (.*.), (.+.), (.-.))
 import Futhark.Util.Pretty (Pretty)
 import Language.Futhark (VName)
+
+mkERow :: VName -> SoP Symbol -> IndexFnM (SoP Symbol)
+mkERow i2 e3 = do
+  j <- newVName "j"
+  let ub   = sym2SoP (Var i2) .-. int2SoP 1
+  let e3_j = rep (mkRep i2 (sym2SoP (Var j))) e3
+  pure $ sumSoP j (int2SoP 0) ub e3_j
 
 from1Dto2D :: Quantified Domain -> Quantified Domain -> SoP Symbol -> [(VName, SoP Symbol)]
 from1Dto2D (Forall i (Iota n)) (Forall j (Iota m)) e_idx

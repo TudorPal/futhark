@@ -7,7 +7,7 @@ import Data.Maybe (fromJust, isJust)
 import Data.Set qualified as S
 import Futhark.Analysis.Properties.AlgebraBridge (Answer (..), addRelDim, addRelShape, algebraContext, andM, assume, isFalse, isUnknown, simplify)
 import Futhark.Analysis.Properties.IndexFn (Domain (Iota), IndexFn (..), Quantified (..), cases, casesToList)
-import Futhark.Analysis.Properties.Monad (IndexFnM, rollbackAlgEnv)
+import Futhark.Analysis.Properties.Monad (IndexFnM, rollbackAlgEnv, printM, prettyStr)
 import Futhark.Analysis.Properties.Query ((=>?), unifiesWith)
 import Futhark.Analysis.Properties.Rule (Rule (..), applyRuleBook, rulesIndexFn, vacuous)
 import Futhark.Analysis.Properties.Symbol (Symbol (..), toCNF)
@@ -16,6 +16,7 @@ import Futhark.Analysis.Properties.Unify (Renameable, fv, renameSame, sub)
 import Futhark.MonadFreshNames (newVName)
 import Futhark.SoP.SoP (SoP, filterSoP, int2SoP, isZero, justConstant, justSym, sym2SoP, term2SoP, (.*.), (.+.), (.-.), (./.))
 import Language.Futhark (VName)
+import Futhark.Analysis.Properties.Flatten (mkERow)
 
 class (Monad m) => Rewritable v m where
   rewrite :: v -> m v
@@ -102,13 +103,17 @@ rewriteWithoutRules =
   convergeRename rewrite_
 
 solveIx :: (ASTMappable Symbol a) => [[Quantified Domain]] -> a -> IndexFnM a
-solveIx [dim] =
-  astMap
-    ( ASTMapper
-        { mapOnSymbol = solveIdx1 dim,
-          mapOnSoP = applyRuleBook rulesSoP
-        }
-    )
+solveIx [dim] = do
+  printM 1 $ "solveIx start dim=" <> prettyStr dim
+  res <-
+    astMap
+      ( ASTMapper
+          { mapOnSymbol = solveIdx1 dim,
+            mapOnSoP = applyRuleBook rulesSoP
+          }
+      )
+  printM 1 "solveIx done"
+  pure res
   where
     rulesSoP :: IndexFnM [Rule (SoP Symbol) Symbol IndexFnM]
     rulesSoP = do
@@ -140,6 +145,7 @@ solveIx [dim] =
               from = sym2SoP (Sum h1 (int2SoP 0) (hole h2) (Apply (Hole h3) [hole h1])) 
               .-. sym2SoP (Sum h1 (int2SoP 0) (hole h2 .-. int2SoP 1) (Apply (Hole h3) [hole h1])),
               to = \s -> do
+                printM 1 "solveIx SolveNestedSum fired"
                 sub s $ sym2SoP (Apply (Hole h3) [hole h2]),
               sideCondition = vacuous
             }
@@ -186,6 +192,34 @@ solveIdx1 dim@[Forall i1 (Iota _), Forall _ (Iota e2)] sym@(Ix _ m e_idx)
       case q of
         Yes -> pure (Var i1)
         Unknown -> pure sym
+  -- irregular flattened case
+  | otherwise = rollbackAlgEnv $ do
+      -- print Ix
+      -- printM 1 $ "solveIdx1 irregular Ix: " <> prettyStr sym
+      -- printM 1 $ "============================="
+      -- printM 1 $ "solveIdx1 irregular e2=" <> prettyStr e2
+      -- printM 1 $ "solveIdx1 irregular m =" <> prettyStr m
+      
+      -- printM 1 $ "solveIdx1 irregular e_idx=" <> prettyStr e_idx
+      
+      addRelDim dim
+      dimensions_match <- e2 `unifiesWith` m
+      eRow <- mkERow i1 e2
+      -- printM 1 $ "solveIdx1 irregular eRow=" <> prettyStr eRow
+      q <-
+        if dimensions_match
+          then Bool True =>? (eRow :<= e_idx :&& e_idx :< eRow .+. e2)
+          else pure Unknown
+      -- printM 1 $ "solveIdx1 irregular q=" <> prettyStr q
+      case q of
+        Yes -> pure (Var i1)
+        Unknown -> do
+          -- printM 1 $ "solveIdx1 saw Ix but could not solve it: " <> prettyStr sym
+          pure sym
+-- solveIdx1 dim sym@(Ix _ _ _)
+--   = do
+--       printM 1 $ "solveIdx1 saw Ix but could not solve it: " <> prettyStr sym
+--       pure sym
 solveIdx1 _ sym = pure sym
 
 solveIdxZero :: p -> Symbol -> IndexFnM (SoP Symbol)

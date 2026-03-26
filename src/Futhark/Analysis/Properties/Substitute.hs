@@ -11,8 +11,10 @@ import Data.Functor ((<&>))
 import Data.Map qualified as M
 import Data.Maybe (fromJust, fromMaybe, isJust)
 import Data.Set qualified as S
+import Data.List (nubBy)
+import Data.List.NonEmpty qualified as NE
 import Futhark.Analysis.Properties.AlgebraBridge (answerFromBool, orM, simplify, ($==))
-import Futhark.Analysis.Properties.Flatten (from1Dto2D, lookupII, from1Dto2DM)
+import Futhark.Analysis.Properties.Flatten (from1Dto2D, lookupII, from1Dto2DM, mkERow)
 import Futhark.Analysis.Properties.IndexFn
 import Futhark.Analysis.Properties.IndexFnPlus (domainEnd, intervalEnd, intervalStart, repCases, repDomain, repIndexFn)
 import Futhark.Analysis.Properties.Monad
@@ -101,12 +103,12 @@ subst indexfn = do
   g <- renameM indexfn
   subber (legalArg k g) g
 
-mkERow :: VName -> SoP Symbol -> IndexFnM (SoP Symbol)
-mkERow i2 e3 = do
-  j <- newVName "j"
-  let ub   = sym2SoP (Var i2) .-. int2SoP 1
-  let e3_j = rep (mkRep i2 (sym2SoP (Var j))) e3
-  pure $ sumSoP j (int2SoP 0) ub e3_j
+-- mkERow :: VName -> SoP Symbol -> IndexFnM (SoP Symbol)
+-- mkERow i2 e3 = do
+--   j <- newVName "j"
+--   let ub   = sym2SoP (Var i2) .-. int2SoP 1
+--   let e3_j = rep (mkRep i2 (sym2SoP (Var j))) e3
+--   pure $ sumSoP j (int2SoP 0) ub e3_j
 
 -- Try to apply PropFlatten on dimension k, propagating a flattened domain
 -- from f to g.
@@ -271,14 +273,13 @@ substituteOnce f g_presub (f_apply, actual_args) = do
       <> "\n  actual_args: " <> prettyStr actual_args
       <> "\n  shape f: " <> prettyStr (shape f)
       <> "\n  shape g_presub: " <> prettyStr (shape g_presub)
-  
+
   printM 1 $
     "substituteOnce args shape info"
       <> "\n  rank f: " <> prettyStr (rank f)
       <> "\n  length actual_args: " <> prettyStr (length actual_args)
       <> "\n  iterator count in shape f: " <> prettyStr (length (concat (shape f)))
 
-  -- compute args in the monad because mkArgM uses from1Dto2D which is monadic
   args <- mkArgs
 
   let new_shape =
@@ -286,25 +287,70 @@ substituteOnce f g_presub (f_apply, actual_args) = do
           <&> map
             ( \case
                 Forall j dg
-                  -- f(args) is not in dom(g).
-                  | vn `notElem` fv dg -> Forall j dg
-                  -- f(args) is in dom(g) and f has only one case.
+                  | vn `notElem` fv dg ->
+                      Forall j dg
                   | Just e_f <- justSingleCase f ->
                       Forall j $ repDomain (mkRep vn (rep args e_f)) dg
-                  -- f(args) is in dom(g) and f has multiple cases.
                   | e_f <- flattenCases (body f) ->
                       Forall j $ repDomain (mkRep vn (rep args e_f)) dg
             )
-  traverse (simplify <=< solveIx new_shape) <=< applySubRules args $
-    g
-      { shape = new_shape,
-        body = cases $ do
-          (p_f, e_f) <- guards f
-          (p_g, e_g) <- guards g
-          let s = mkRep vn (rep args e_f)
-          pure (sop2Symbol (rep s p_g) :&& sop2Symbol (rep args p_f), rep s e_g)
-      }
+
+  let g_sub =
+        g
+          { shape = new_shape,
+            body = cases $ do
+              (p_f, e_f) <- guards f
+              (p_g, e_g) <- guards g
+              let s = mkRep vn (rep args e_f)
+              pure (sop2Symbol (rep s p_g) :&& sop2Symbol (rep args p_f), rep s e_g)
+          }
+
+  mg1 <- applySubRules args g_sub
+  -- printM 1 "substituteOnce after applySubRules"
+  -- printM 1 $ "substituteOnce initial new_shape=" <> prettyStr new_shape
+
+  mg2 <- case mg1 of
+    Nothing ->
+      pure Nothing
+    Just g1 -> do
+      -- printM 1 $ "substituteOnce actual shape after applySubRules=" <> prettyStr (shape g1)
+      Just <$> solveIx (shape g1) g1
+
+  -- printM 1 "substituteOnce after solveIx"
+  -- print the output
+  printM 1 $ "HERE! substituteOnce body after solveIx=" <> prettyStr (body <$> mg2)
+
+  mg3 <- traverse simplify mg2
+  -- printM 1 "substituteOnce after simplify"
+
+  let mg3' = cleanupIndexFn <$> mg3
+  
+  pure mg3'
   where
+    cleanupIndexFn :: IndexFn -> IndexFn
+    cleanupIndexFn g0 =
+      g0 {body = cleanupCases (body g0)}
+
+    cleanupCases :: Cases Symbol (SoP Symbol) -> Cases Symbol (SoP Symbol)
+    cleanupCases (Cases cs) =
+      Cases . NE.fromList $ dedup kept
+      where
+        xs = NE.toList cs
+
+        -- remove impossible branches
+        live = filter ((/= Bool False) . fst) xs
+
+        -- Cases must stay non-empty, so if everything is dead,
+        -- keep one original branch as a fallback
+        kept =
+          case live of
+            [] -> take 1 xs
+            _ -> live
+
+        dedup = nubBy sameBranch
+
+        sameBranch (p1, e1) (p2, e2) =
+          p1 == p2 && e1 == e2
     -- Construct replacement from formal arguments of f to actual arguments.
     mkArgs :: IndexFnM (Replacement Symbol)
     mkArgs =

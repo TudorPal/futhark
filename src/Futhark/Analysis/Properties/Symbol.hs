@@ -37,6 +37,7 @@ data Symbol
   | Symbol :&& Symbol
   | Symbol :|| Symbol
   | Pow Integer (SoP Symbol)
+  -- ix should take a list of iterators rather than the first 2 
   | Ix (SoP Symbol) (SoP Symbol) (SoP Symbol)
   | Recurrence
   | -- Properties are used only in index functions for pre-/post-conditions.
