@@ -280,6 +280,9 @@ substituteOnce f g_presub (f_apply, actual_args) = do
       <> "\n  length actual_args: " <> prettyStr (length actual_args)
       <> "\n  iterator count in shape f: " <> prettyStr (length (concat (shape f)))
 
+  printM 1 $ "--- f ---" <> prettyStr (f)
+  printM 1 $ "--- g ---" <> prettyStr (g)
+
   args <- mkArgs
 
   let new_shape =
@@ -317,7 +320,8 @@ substituteOnce f g_presub (f_apply, actual_args) = do
       Just <$> solveIx (shape g1) g1
 
   -- printM 1 "substituteOnce after solveIx"
-  -- print the output
+  -- print the domain
+  printM 1 $ "HERE! substituteOnce domain after solveIx=" <> prettyStr (shape <$> mg2)
   printM 1 $ "HERE! substituteOnce body after solveIx=" <> prettyStr (body <$> mg2)
 
   mg3 <- traverse simplify mg2

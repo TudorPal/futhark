@@ -523,7 +523,12 @@ toAlgebra_ sym@(Apply (Var f) [e_i, e_j]) = do
 toAlgebra_ x@(Apply {}) = lookupUntransPE x
 toAlgebra_ (Pow c e) = Algebra.Pow . (c,) <$> toAlgebra e
 toAlgebra_ Recurrence = lookupUntransPE Recurrence
-toAlgebra_ x@(Ix {}) = lookupUntransPE x
+toAlgebra_ x@(Ix m _ _) = do
+  alg_x <- lookupUntransPE x
+  alg_m <- toAlgebra m
+  addRel (sym2SoP alg_x :>=: int2SoP 0)
+  addRel (sym2SoP alg_x :<: alg_m)
+  pure alg_x
 -- The rest are boolean statements.
 toAlgebra_ x = handleBoolean x
 

@@ -18,7 +18,7 @@ import Futhark.Analysis.Properties.AlgebraBridge.Util
 import Futhark.Analysis.Properties.AlgebraPC.Symbol qualified as Algebra
 import Futhark.Analysis.Properties.Flatten (unflatten)
 import Futhark.Analysis.Properties.IndexFn
-import Futhark.Analysis.Properties.IndexFnPlus (dimSize, domainEnd, domainStart, index, intervalEnd, repCases, repIndexFn)
+import Futhark.Analysis.Properties.IndexFnPlus (dimSize, dimEnd, domainEnd, domainStart, index, intervalEnd, repCases, repIndexFn)
 import Futhark.Analysis.Properties.Monad
 import Futhark.Analysis.Properties.Property (MonDir (..), askRng, cloneProperty)
 import Futhark.Analysis.Properties.Property qualified as Property
@@ -431,11 +431,15 @@ forward (E.TupLit xs _) = do
 forward expr@(E.AppExp (E.Index e_xs slice loc) _)
   -- Indexing on the form e_1[e_2].
   | [E.DimFix e_idx] <- slice = do
+      printM 1 $ "Forwarding indexing expression: " <> prettyStr expr
       f_xss <- forward e_xs
       f_idxs <- forward e_idx
       forM (zip f_xss f_idxs) $ \(f_xs, f_idx) -> do
         unless (rank f_xs == 1) $
           error "Not implemented yet: implicit indexing dimensions. Use `:`."
+
+        printM 1 $ "f_xs: " <> prettyStr f_xs
+          <> "\nf_idx: " <> prettyStr f_idx
 
         checkBounds expr f_xs [Just f_idx]
         xs <- case justVName e_xs of
@@ -1730,36 +1734,108 @@ addSizeVariable d = do
 {-
     Bounds checking.
 -}
+-- checkBounds :: E.Exp -> IndexFn -> [Maybe IndexFn] -> IndexFnM ()
+-- checkBounds _ (IndexFn [] _) _ =
+--   error "E.Index: Indexing into scalar"
+-- checkBounds e f_xs idxs =
+--   whenBoundsChecking $ do
+--     printM 1 $ "checkBounds e      = " <> prettyStr e
+--     printM 1 $ "checkBounds f_xs   = " <> prettyStr f_xs
+--     printM 1 $ "checkBounds shape  = " <> prettyStr (shape f_xs)
+--     printM 1 $ "checkBounds idxs   = " <> prettyStr (map (fmap shape) idxs)
+--     forM_ (zip (shape f_xs) idxs) checkIndexInDomain
+--     printM 1 . locMsg (E.locOf e) $ prettyStr e <> greenString " SAFE"
+--   where
+--     checkIndexInDomain (_, Nothing) = pure ()
+--     checkIndexInDomain ([Forall _ d], Just f_idx) =
+--       algebraContext f_idx $ do
+--         bounds <- getBounds d
+--         void . foreachCase f_idx $ \n -> do
+--           forM bounds $ \bound -> do
+--             c <- isYes <$> queryCase (CaseCheck bound) f_idx n
+--             unless c $ emitFailure n bound f_idx
+--     checkIndexInDomain (dims, Just f_idx) = do
+--       printM 1 $ "checkIndexInDomain FALLBACK dims = " <> prettyStr dims
+--       printM 1 $ "checkIndexInDomain FALLBACK f_idx = " <> prettyStr f_idx
+--       undefined
+
+--     getBounds d = do
+--       d_start <- rewrite $ domainStart d
+--       d_end <- rewrite $ domainEnd d
+--       pure $ case d of
+--         Cat _ _ b ->
+--           [ \idx -> b :<= idx :|| d_start :<= idx,
+--             \idx -> idx :<= intervalEnd d :|| idx :<= d_end
+--           ]
+--         Iota _ ->
+--           [ (d_start :<=),
+--             (:<= d_end)
+--           ]
+
+--     emitFailure n bound f_idx =
+--       let (p_idx, e_idx) = getCase n $ body f_idx
+--        in error . errorMsg (E.locOf e) $
+--             "Unsafe indexing: "
+--               <> prettyStr e
+--               <> " (failed to show: "
+--               <> prettyStr p_idx
+--               <> " => "
+--               <> prettyStr (bound e_idx)
+--               <> ")."
+
 checkBounds :: E.Exp -> IndexFn -> [Maybe IndexFn] -> IndexFnM ()
 checkBounds _ (IndexFn [] _) _ =
   error "E.Index: Indexing into scalar"
 checkBounds e f_xs idxs =
   whenBoundsChecking $ do
+    printM 1 $ "checkBounds e      = " <> prettyStr e
+    printM 1 $ "checkBounds f_xs   = " <> prettyStr f_xs
+    printM 1 $ "checkBounds shape  = " <> prettyStr (shape f_xs)
+    printM 1 $ "checkBounds idxs   = " <> prettyStr (map (fmap shape) idxs)
+
     forM_ (zip (shape f_xs) idxs) checkIndexInDomain
     printM 1 . locMsg (E.locOf e) $ prettyStr e <> greenString " SAFE"
   where
     checkIndexInDomain (_, Nothing) = pure ()
-    checkIndexInDomain ([Forall _ d], Just f_idx) =
+
+    checkIndexInDomain ([Forall _ d], Just f_idx) = do
+      bounds <- getBounds d
+      checkAgainstBounds bounds f_idx
+
+    checkIndexInDomain (dims, Just f_idx) = do
+      printM 1 $ "checkIndexInDomain FLAT dims = " <> prettyStr dims
+      bounds <- getBoundsDims dims
+      checkAgainstBounds bounds f_idx
+
+    checkAgainstBounds bounds f_idx =
       algebraContext f_idx $ do
-        bounds <- getBounds d
         void . foreachCase f_idx $ \n -> do
-          forM bounds $ \bound -> do
+          forM_ bounds $ \bound -> do
             c <- isYes <$> queryCase (CaseCheck bound) f_idx n
             unless c $ emitFailure n bound f_idx
-    checkIndexInDomain (_dims, Just _) = undefined
 
     getBounds d = do
       d_start <- rewrite $ domainStart d
-      d_end <- rewrite $ domainEnd d
+      d_end   <- rewrite $ domainEnd d
       pure $ case d of
         Cat _ _ b ->
-          [ \idx -> b :<= idx :|| d_start :<= idx,
-            \idx -> idx :<= intervalEnd d :|| idx :<= d_end
+          [ \idx -> b :<= idx :|| d_start :<= idx
+          , \idx -> idx :<= intervalEnd d :|| idx :<= d_end
           ]
         Iota _ ->
-          [ (d_start :<=),
-            (:<= d_end)
+          [ (d_start :<=)
+          , (:<= d_end)
           ]
+
+    getBoundsDims dims = do
+      -- One source-level dimension represented by several iterators.
+      -- The source index is flat, so check against the total flat extent.
+      d_end <- rewrite $ dimEnd dims
+      printM 1 $ "checkIndexInDomain FLAT dimEnd = " <> prettyStr d_end
+      pure
+        [ (int2SoP 0 :<=)
+        , (:<= d_end)
+        ]
 
     emitFailure n bound f_idx =
       let (p_idx, e_idx) = getCase n $ body f_idx
