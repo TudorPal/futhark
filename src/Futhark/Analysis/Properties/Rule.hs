@@ -137,6 +137,8 @@ hole = sym2SoP . Hole
 rulesIndexFn :: IndexFnM [Rule IndexFn Symbol IndexFnM]
 rulesIndexFn = do
   i <- newVName "i"
+  i1 <- newVName "i1"
+  i2 <- newVName "i2"
   j <- newVName "j"
   k <- newVName "k"
   n <- newVName "n"
@@ -386,35 +388,26 @@ rulesIndexFn = do
         { name = "Segmented prefix sum",
           from =
             IndexFn
-              { shape = [[Forall i (Iota (hole n)), Forall j (Iota (hole m))]],
+              { shape = [[Forall i1 (Iota (hole n)), Forall i2 (Iota (hole m))]],
                 body =
                   cases
-                    [ (hole j :== int2SoP 0, hole h1),
+                    [ (hole i2 :== int2SoP 0, hole h1),
                       (Hole h3, Recurrence ~+~ Hole h2)
                     ]
               },
           to = \s -> debugT' "prefix sum cat" $ do
-            -- construct sum from 0 to i over hole m
-            let i' = repVName (mapping s) i
-            m' <- sub s (hole m)
-            -- j1 <- newVName "j"
-            -- let m_j = rep (mkRep i' (sym2SoP $ Var j1)) m'
-            -- let offset = toSumOfSums (j1) (int2SoP 0) (sym2SoP (Var i') .-. int2SoP 1) m_j
-            e1_b <- rep (mkRep i' m') <$> sub s (hole h1)
-            debugPrettyM "e1_b" e1_b
-            e2 <- sub s (hole h2)
-            j2 <- newVName "j"
-            let e2_j = rep (mkRep i' (sym2SoP $ Var j2)) e2
-            
-            let e2_sum = toSumOfSums (j2) (int2SoP 0) (sym2SoP (Var i') .-. int2SoP 1) e2_j
-            printM 1 $ "e2: " ++ prettyStr (e2)
-            printM 1 $ "e2_j: " ++ prettyStr (e2_j)
-            printM 1 $ "e2_sum: " ++ prettyStr (e2_sum)
-            error "TODO: fix offset in segmented prefix sum"
+            let i2' = repVName (mapping s) i2
+            x <- newVName "j"
+            e_base <- rep (mkRep i2' (int2SoP 0 :: SoP Symbol)) <$> sub s (hole h1)
+            e_rec <- rep (mkRep i2' . sym2SoP $ Var x) <$> sub s (hole h2)
+            let e_sum = toSumOfSums x (int2SoP 1) (sym2SoP (Var i2')) e_rec
+
+            printM 1 $ "e_base: " ++ prettyStr e_base
+            printM 1 $ "e_sum: " ++ prettyStr e_sum
             subIndexFn s $
               IndexFn
-                { shape = [[Forall i (Iota (hole n)), Forall j (Iota (hole m))]],
-                  body = cases [(Bool True, e1_b .+. e2_sum)]
+                { shape = [[Forall i1 (Iota (hole n)), Forall i2 (Iota (hole m))]],
+                  body = cases [(Bool True, e_base .+. e_sum)]
                 },
           sideCondition = \s -> do
             e1_symbols <- concatMap fst . sopToLists <$> sub s (Hole h1)

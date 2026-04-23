@@ -32,8 +32,9 @@ import Debug.Trace (trace)
 import Futhark.Analysis.Properties.AlgebraBridge
 import Futhark.Analysis.Properties.AlgebraPC.Symbol qualified as Algebra
 import Futhark.Analysis.Properties.EqSimplifier
+import Futhark.Analysis.Properties.Flatten (from1Dto2DM)
 import Futhark.Analysis.Properties.IndexFn
-import Futhark.Analysis.Properties.IndexFnPlus (domainEnd, domainStart, intervalEnd, intervalStart, repCases, repDomain)
+import Futhark.Analysis.Properties.IndexFnPlus (dimSize, domainEnd, domainStart, intervalEnd, intervalStart, repCases, repDomain)
 import Futhark.Analysis.Properties.Monad
 import Futhark.Analysis.Properties.Property
 import Futhark.Analysis.Properties.Symbol
@@ -533,8 +534,8 @@ newProver (InjGeNd rcd dom ges) = algebraContext (IndexFn [dom] ges) $ do
     allM
       [ ((p1 :&& p2) =>? (e1 :/= e2))
           `orM` ((p1 :&& p2) =>? (not_in_rcd e1 :|| not_in_rcd e2))
-        | (p1, e1) <- casesToList ges,
-          (p2, e2) <- casesToList (repCases i_to_j ges)
+      | (p1, e1) <- casesToList ges,
+        (p2, e2) <- casesToList (repCases i_to_j ges)
       ]
   where
     not_in_rcd x = case rcd of
@@ -553,14 +554,14 @@ newProver (NoOverlapGe rcd (dom1, ges1) (dom2, ges2))
             addRelDim dom1
             allM
               [ q (p1, e1) (p2, e2)
-                | (p1, e1) <- casesToList ges1,
-                  (p2, e2) <- casesToList ges2
+              | (p1, e1) <- casesToList ges1,
+                (p2, e2) <- casesToList ges2
               ]
       let case_i_neq_j = forallNEQ dom1 $ \i_to_j -> do
             allM
               [ q (p1, e1) (p2, e2)
-                | (p1, e1) <- casesToList ges1,
-                  (p2, e2) <- casesToList (repCases i_to_j ges2)
+              | (p1, e1) <- casesToList ges1,
+                (p2, e2) <- casesToList (repCases i_to_j ges2)
               ]
       case_i_eq_j `andM` case_i_neq_j
   | otherwise = pure Unknown -- Not implemented yet.
@@ -576,7 +577,7 @@ newProver (MonGe order i j d ges') = do
         i +< j
         allM
           [ (sop2Symbol (c @ i) :&& sop2Symbol (c @ j)) =>? (e @ i) `rel` (e @ j)
-            | (c, e) <- ges
+          | (c, e) <- ges
           ]
   let intracase = answerFromBool . isJust <$> sortGes i j d ges
   let intersegment = intercase `andM` intracase
@@ -615,7 +616,7 @@ newProver (MonGeNd order dom ges) = do
   let intercase = forallLT dom $ \i_to_j -> do
         allM
           [ (p :&& repSelf i_to_j p) =>? e `rel` rep i_to_j e
-            | (p, e) <- casesToList ges
+          | (p, e) <- casesToList ges
           ]
   let intracase = answerFromBool . isJust <$> sortStrict dom ges
   intercase `andM` intracase
@@ -833,6 +834,10 @@ prove_ is_segmented (PBijectiveRCD (a, b) (c, d)) f@(IndexFn [[Forall i dom]] _)
   step1 `andM` step2
   where
     e @ x = rep (mkRep i (Var x)) e
+-- prove_ baggage stmt@(PFiltPartInv _ _) f@(IndexFn [dims] _)
+--   | length dims > 1 = do
+--       f_flat <- flattenRank1IndexFn f
+--       prove_ baggage stmt f_flat
 prove_ baggage (PFiltPartInv pf pps') f@(IndexFn [[Forall i dom]] _) = algebraContext f $ do
   let p_otherwise x = foldl1 (:&&) [neg (pp x) | pp <- pps']
   let pps = pps' <> [p_otherwise]
@@ -909,6 +914,26 @@ prove_ _ (ForallSegments _) _ =
   undefined
 prove_ _ _ _ = pure Unknown
 
+-- flattenRank1IndexFn :: IndexFn -> IndexFnM IndexFn
+-- flattenRank1IndexFn f@(IndexFn [dims] _) = do
+--   p <- newNameFromString "p"
+--   let n = dimSize dims
+
+--   reps <- case dims of
+--     [Forall i _] ->
+--       pure $ mkRep i (sym2SoP (Var p))
+--     [d1, d2] ->
+--       mkRepFromList <$> from1Dto2DM d1 d2 (sym2SoP (Var p))
+--     _ ->
+--       error "flattenRank1IndexFn: nd flatten not implemented yet."
+
+--   simplify $
+--     IndexFn
+--       [[Forall p (Iota n)]]
+--       (repCases reps (body f))
+-- flattenRank1IndexFn _ =
+--   error "flattenRank1IndexFn: expected rank-1 index function"
+
 data Order = LT | GT | Undefined
   deriving (Eq, Show)
 
@@ -980,9 +1005,9 @@ forallLT' dims query =
 lexicalLT :: [(VName, VName, Domain)] -> [IndexFnM ()]
 lexicalLT dims =
   [ zipWithM_ (\(i, j, d) rel -> (i `rel` j) d) dims rels
-    | dim_idx <- [0 .. n - 1],
-      suffixRels <- replicateM (n - 1 - dim_idx) [(#<), (#>=)],
-      let rels = replicate dim_idx (#==) ++ [(#<)] ++ suffixRels
+  | dim_idx <- [0 .. n - 1],
+    suffixRels <- replicateM (n - 1 - dim_idx) [(#<), (#>=)],
+    let rels = replicate dim_idx (#==) ++ [(#<)] ++ suffixRels
   ]
   where
     n = length dims

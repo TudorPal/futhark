@@ -18,7 +18,7 @@ import Futhark.Analysis.Properties.AlgebraBridge.Util
 import Futhark.Analysis.Properties.AlgebraPC.Symbol qualified as Algebra
 import Futhark.Analysis.Properties.Flatten (unflatten)
 import Futhark.Analysis.Properties.IndexFn
-import Futhark.Analysis.Properties.IndexFnPlus (dimSize, dimEnd, domainEnd, domainStart, index, intervalEnd, repCases, repIndexFn)
+import Futhark.Analysis.Properties.IndexFnPlus (dimSize, dimEnd, domainEnd, domainStart, index, intervalEnd, repCases, repIndexFn, indexM)
 import Futhark.Analysis.Properties.Monad
 import Futhark.Analysis.Properties.Property (MonDir (..), askRng, cloneProperty)
 import Futhark.Analysis.Properties.Property qualified as Property
@@ -1191,25 +1191,50 @@ forwardPropertyPrelude f args =
 
     -- Infers the index function of a lambda term over the indices of X.
     -- The result must be a single case index function.
+    -- inferLambdaIndexFn x (param, lam) = do
+    --   res <- lookupIndexFn x
+    --   case res of
+    --     Just [f_X] | [[Forall i _]] <- shape f_X -> rollbackAlgEnv $ do
+    --       let idx = IndexFn [] (cases [(Bool True, sVar i)])
+    --       bindLambdaBodyParams [(param, idx)]
+    --       addRelShape (shape f_X)
+    --       res_f <- forward lam >>= subst . IndexFn (shape f_X) . body . head
+    --       case justSingleCase res_f of
+    --         Just e -> pure (i, e)
+    --         Nothing -> error $ "Not implemented yet. Lambda must return a single case index function: " <> prettyStr res_f
+    --     Nothing -> error "inferLambdaIndexFn: known limitation: need to bind arguments to lambdas earlier."
+    --     _ -> error "inferLambdaIndexFn: invalid array shape"
     inferLambdaIndexFn x (param, lam) = do
       res <- lookupIndexFn x
       case res of
-        Just [f_X] | [[Forall i _]] <- shape f_X -> rollbackAlgEnv $ do
+        Just [f_X] | [_dims] <- shape f_X -> rollbackAlgEnv $ do
+          i <- newVName "i"
+          n <- rewrite $ dimSize (head (shape f_X))
+          -- the lambda parameter is a source-level flat index into x
           let idx = IndexFn [] (cases [(Bool True, sVar i)])
           bindLambdaBodyParams [(param, idx)]
-          addRelShape (shape f_X)
-          res_f <- forward lam >>= subst . IndexFn (shape f_X) . body . head
+          -- reason about i as a flat index in [0, n-1]
+          addRelShape [[Forall i (Iota n)]]
+          res_f <- forward lam >>= subst . IndexFn [[Forall i (Iota n)]] . body . head
           case justSingleCase res_f of
             Just e -> pure (i, e)
-            Nothing -> error $ "Not implemented yet. Lambda must return a single case index function: " <> prettyStr res_f
-        Nothing -> error "inferLambdaIndexFn: known limitation: need to bind arguments to lambdas earlier."
-        _ -> error "inferLambdaIndexFn: invalid array shape"
+            Nothing ->
+              error $
+                "Not implemented yet. Lambda must return a single case index function: "
+                  <> prettyStr res_f
+        Nothing ->
+          error "inferLambdaIndexFn: known limitation: need to bind arguments to lambdas earlier."
+        _ ->
+          error "inferLambdaIndexFn: invalid array shape"
 
     -- Map filter and partition lambdas over indices of X to infer their
     -- index functions.
     commonFiltPart x (param_filt, lam_filt) parts = do
       (i, filt) <- inferLambdaIndexFn x (param_filt, lam_filt)
-      parts_exprs <- mapM (fmap snd . inferLambdaIndexFn x) parts
+      parts_exprs <-
+        forM parts $ \part -> do
+          (j, part_e) <- inferLambdaIndexFn x part
+          pure $ rep (mkRep j (sVar i)) part_e
 
       pure $ do
         -- We assume that the filter and partitions are properties that depend on i.
@@ -1511,31 +1536,60 @@ zipArgsSOAC ::
   [E.Pat E.ParamType] ->
   NE.NonEmpty (b, E.Exp) ->
   IndexFnM ([Iterator], [[(E.VName, IndexFn)]])
+-- zipArgsSOAC loc formal_args actual_args = do
+--   -- Renaming makes sure all Cat k bound in iterators are identical, so that
+--   -- a new common outer iterator can be used.
+--   args <- renameSameL (mapM . mapM) =<< mapM forward (getArgs actual_args)
+--   -- let new_outer_dim = maximum $ map (head . shape) (mconcat args)
+--   -- Transform each arg to use the new common outer iterator.
+--   -- args' <- forM args . mapM $ \f -> do
+--   --   vn <- newVName "#f"
+--   --   let new_shape = new_outer_dim : tail (shape f)
+--   --   IndexFn
+--   --     { shape = new_shape,
+--   --       body = singleCase . sym2SoP $ Apply (Var vn) (map index new_shape)
+--   --     }
+--   --     @ (vn, f)
+--   let new_outer_dim = L.maximumBy (comparing length) $ map (head . shape) (mconcat args)
+--   args' <- forM args . mapM $ \f -> do
+--     vn <- newVName "#f"
+--     let new_shape = new_outer_dim : tail (shape f)
+--     let actuals = map (sym2SoP . Var . boundVar) (concat new_shape)
+--     IndexFn
+--       { shape = new_shape,
+--         body = singleCase . sym2SoP $ Apply (Var vn) actuals
+--       }
+--       @ (vn, f)
+--   -- Substitutions may have renamed Cat `k`s; do a common rename again.
+--   args'' <- renameSameL (mapM . mapM) args'
+--   let new_outer_dim' = head (shape (head (head args'')))
+--   -- Drop the new outer dim, aligning arguments with parameters.
+--   (aligned_args, _) <-
+--     zipArgs' loc formal_args (map (map dropOuterDim) args'')
+--   pure (new_outer_dim', aligned_args)
+--   where
+--     dropOuterDim f = f {shape = drop 1 (shape f)}
+
 zipArgsSOAC loc formal_args actual_args = do
-  -- Renaming makes sure all Cat k bound in iterators are identical, so that
+  -- Renaming makes sure all segmented iterators line up, so that
   -- a new common outer iterator can be used.
   args <- renameSameL (mapM . mapM) =<< mapM forward (getArgs actual_args)
-  -- let new_outer_dim = maximum $ map (head . shape) (mconcat args)
+
+  let new_outer_dim =
+        L.maximumBy (comparing length) $ map (head . shape) (mconcat args)
+
   -- Transform each arg to use the new common outer iterator.
-  -- args' <- forM args . mapM $ \f -> do
-  --   vn <- newVName "#f"
-  --   let new_shape = new_outer_dim : tail (shape f)
-  --   IndexFn
-  --     { shape = new_shape,
-  --       body = singleCase . sym2SoP $ Apply (Var vn) (map index new_shape)
-  --     }
-  --     @ (vn, f)
-  let new_outer_dim = L.maximumBy (comparing length) $ map (head . shape) (mconcat args)
+  -- Important: apply with one index per dimension, not one per iterator.
   args' <- forM args . mapM $ \f -> do
     vn <- newVName "#f"
     let new_shape = new_outer_dim : tail (shape f)
-    let actuals = map (sym2SoP . Var . boundVar) (concat new_shape)
+    actuals <- mapM indexM new_shape
     IndexFn
       { shape = new_shape,
         body = singleCase . sym2SoP $ Apply (Var vn) actuals
       }
       @ (vn, f)
-  -- Substitutions may have renamed Cat `k`s; do a common rename again.
+  -- Substitutions may have renamed iterators; do a common rename again.
   args'' <- renameSameL (mapM . mapM) args'
   let new_outer_dim' = head (shape (head (head args'')))
   -- Drop the new outer dim, aligning arguments with parameters.
