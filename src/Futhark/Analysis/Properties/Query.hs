@@ -285,8 +285,17 @@ prove prop = alreadyKnown prop `orM` matchProof prop
             then pure Yes
             else pure Unknown
         _ -> pure Unknown
-    alreadyKnown (InvFiltPart {}) =
-      pure Unknown -- TODO: Implement alreadyKnown for InvFiltPart property
+    alreadyKnown wts@(InvFiltPart y _ _ _) = do
+      res <- askInvFiltPart (Algebra.Var y)
+      case res of
+        Just (InvFiltPart y' z' pf' pps')
+          | y' == y -> do
+              -- If Z, the predicates, and the split points are equivalent, we are done.
+              s <- unify wts =<< fromAlgebra (InvFiltPart y' z' pf' pps')
+              if isJust (s :: Maybe (Substitution Symbol))
+                then pure Yes
+                else pure Unknown
+        _ -> pure Unknown
     alreadyKnown wts@(FiltPart y x _ _) = do
       res <- askFiltPart (Algebra.Var y)
       case res of
