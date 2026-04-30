@@ -48,6 +48,7 @@ propertyPrelude =
       "InjectiveRCD",
       "BijectiveRCD",
       "FiltPartInv",
+      "InvFiltPart",
       "FiltPart",
       "FiltPartInv2",
       "FiltPart2",
@@ -917,6 +918,7 @@ forwardLetEffects [Just vn] e@(E.AppExp (E.Apply e_f args _) _)
       Property.Injective {} -> True
       Property.BijectiveRCD {} -> True
       Property.FiltPartInv {} -> True
+      Property.InvFiltPart {} -> True
       Property.FiltPart {} -> True
       _ -> False
 forwardLetEffects [Just h] e@(E.AppExp (E.Apply e_f args _) _)
@@ -1146,6 +1148,24 @@ forwardPropertyPrelude f args =
           fmap (IndexFn []) . simplify . cases $ do
             (pf, pps) <- propArgs
             pure (Bool True, pr $ Property.FiltPartInv x pf pps)
+    "InvFiltPart"
+      | e_X : e_Z : e_filt : e_parts <- getArgs args,
+        Just (param_filt, lam_filt) <- parsePredicate e_filt,
+        Just parts <- mapM parsePredicate e_parts,
+        Just x <- justVName e_X -> do
+          propArgs <- commonFiltPart x (param_filt, lam_filt) parts
+          z <- forward e_Z
+          case z of
+            [IndexFn [] g_a, IndexFn [] g_b] ->
+              fmap (IndexFn []) . simplify . cases $ do
+                (p_a, a) <- casesToList g_a
+                (p_b, b) <- casesToList g_b
+                (pf, pps) <- propArgs
+                pure (p_a :&& p_b, pr $ Property.InvFiltPart x (a, b) pf pps)
+            _ ->
+              error $
+                "InvFiltPart: expected Z to be a scalar pair, but got "
+                  <> prettyStr z
     "FiltPart"
       | e_Y : e_X : e_filt : e_parts <- getArgs args,
         Just (param_filt, lam_filt) <- parsePredicate e_filt,

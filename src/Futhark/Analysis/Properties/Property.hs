@@ -11,6 +11,8 @@ module Futhark.Analysis.Properties.Property
     getFiltPart,
     getFiltPartInv,
     askFiltPartInv,
+    getInvFiltPart,
+    askInvFiltPart,
     askFiltPart,
     nameAffectedBy,
     askInjectiveRCD,
@@ -51,6 +53,7 @@ data Property u
     -- [c,d] (subset of [a,b]) is the image of this restricted f.
     BijectiveRCD VName (SoP u, SoP u) (SoP u, SoP u)
   | FiltPartInv VName (Predicate u) [Predicate u]
+  | InvFiltPart VName (SoP u, SoP u) (Predicate u) [Predicate u]
   | FiltPart VName VName (Predicate u) [Predicate u]
   | For VName (Predicate (Property u))
   deriving (Eq, Ord, Show)
@@ -81,6 +84,8 @@ instance (Pretty u) => Pretty (Property u) where
     blueString "Bij" <+> prettyName x <+> parens (pretty rcd) <+> parens (pretty img)
   pretty (FiltPartInv x pf pps) =
     blueString "FiltPartInv" <+> prettyName x <+> parens (pretty pf) <+> pretty pps
+  pretty (InvFiltPart x rcd pf pps) =
+    blueString "InvFiltPart" <+> prettyName x <+> parens (pretty rcd) <+> parens (pretty pf) <+> pretty pps
   pretty (FiltPart x y pf pps) =
     blueString "FiltPart" <+> prettyName x <+> prettyName y <+> parens (pretty pf) <+> pretty pps
   pretty (For x prop) =
@@ -135,6 +140,7 @@ askSimProp prop = (`askPropertyWith` getSimilarProp)
     match (Injective {}) (Injective {}) = True
     match (BijectiveRCD {}) (BijectiveRCD {}) = True
     match (FiltPartInv {}) (FiltPartInv {}) = True
+    match (InvFiltPart {}) (InvFiltPart {}) = True
     match (FiltPart {}) (FiltPart {}) = True
     match (For {}) (For {}) = True
     match _ _ = False
@@ -153,6 +159,9 @@ askFiltPartInv = (`askPropertyWith` getFiltPartInv)
 
 askFiltPart :: (MonadSoP u e (Property u) m) => u -> m (Maybe (Property u))
 askFiltPart = (`askPropertyWith` getFiltPart)
+
+askInvFiltPart :: (MonadSoP u e (Property u) m) => u -> m (Maybe (Property u))
+askInvFiltPart = (`askPropertyWith` getInvFiltPart)
 
 getRng :: S.Set (Property u) -> Maybe (Property u)
 getRng props
@@ -203,6 +212,16 @@ getFiltPartInv props
   where
     f (FiltPartInv {}) = True
     f _ = False
+  
+getInvFiltPart :: S.Set (Property u) -> Maybe (Property u)
+getInvFiltPart props
+  | fp@(InvFiltPart {}) : rest <- filter f (S.toList props) = do
+      unless (null rest) $ error "getInvFiltPart multiple InvFiltPart"
+      Just fp
+  | otherwise = Nothing
+  where
+    f (InvFiltPart {}) = True
+    f _ = False
 
 getFiltPart :: S.Set (Property u) -> Maybe (Property u)
 getFiltPart props
@@ -236,6 +255,7 @@ nameAffectedBy (Monotonic x _) = x
 nameAffectedBy (Injective x _) = x
 nameAffectedBy (BijectiveRCD x _ _) = x
 nameAffectedBy (FiltPartInv x _ _) = x
+nameAffectedBy (InvFiltPart x _ _ _) = x
 nameAffectedBy (FiltPart y _x _ _) = y
 nameAffectedBy (For x _) = x
 nameAffectedBy _ = undefined
@@ -246,6 +266,7 @@ cloneProperty x (Monotonic _ a) = Monotonic x a
 cloneProperty x (Injective _ a) = Injective x a
 cloneProperty x (BijectiveRCD _ a b) = BijectiveRCD x a b
 cloneProperty x (FiltPartInv _ a b) = FiltPartInv x a b
+cloneProperty x (InvFiltPart _ a b c) = InvFiltPart x a b c
 cloneProperty x (FiltPart _ a b c) = FiltPart x a b c
 cloneProperty x (For _ a) = For x a
 cloneProperty _ _ = undefined
@@ -271,6 +292,11 @@ mapPropertyM f prop = case prop of
       <*> ((,) <$> mapSymM f c <*> mapSymM f d)
   FiltPartInv x pf pps ->
     FiltPartInv x <$> mapPredicateM f pf <*> mapM (mapPredicateM f) pps
+  InvFiltPart x (a, b) pf pps ->
+    InvFiltPart x
+      <$> ((,) <$> mapSymM f a <*> mapSymM f b) -- mapSymM for SoP in the rcd
+      <*> mapPredicateM f pf
+      <*> mapM (mapPredicateM f) pps
   FiltPart x y pf pps ->
     FiltPart x y <$> mapPredicateM f pf <*> mapM (mapPredicateM f) pps
   For x pred ->

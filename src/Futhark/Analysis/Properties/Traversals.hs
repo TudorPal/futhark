@@ -64,6 +64,12 @@ instance (Ord a, ASTMappable a a) => ASTMappable a (Property a) where
     pf' <- astMap m pf
     pps' <- mapM (astMap m) pps
     pure $ FiltPartInv x pf' pps'
+  astMap m (InvFiltPart x (a, b) pf pps) = do
+    a' <- astMap m a
+    b' <- astMap m b
+    pf' <- astMap m pf
+    pps' <- mapM (astMap m) pps
+    pure $ InvFiltPart x (a', b') pf' pps'
   astMap m (FiltPart x y pf pps) = do
     pf' <- astMap m pf
     pps' <- mapM (astMap m) pps
@@ -158,6 +164,11 @@ instance ASTFoldable Symbol (Property Symbol) where
   astFold m acc (FiltPartInv _ pf pps) = do
     acc' <- astFold m acc pf
     foldM (astFold m) acc' pps
+  astFold m acc (InvFiltPart _ (a, b) pf pps) = do
+    acc1 <- astFold m acc a
+    acc2 <- astFoldF m b acc1
+    acc3 <- astFold m acc2 pf
+    foldM (astFold m) acc3 pps
   astFold m acc (FiltPart _ _ pf pps) = do
     acc' <- astFold m acc pf
     foldM (astFold m) acc' pps

@@ -336,6 +336,11 @@ instance (Ord a, Renameable a) => Renameable (Property a) where
     BijectiveRCD x <$> rename_ vns tau rcd <*> rename_ vns tau img
   rename_ vns tau (FiltPartInv x pf pps) =
     FiltPartInv x <$> rename_ vns tau pf <*> mapM (rename_ vns tau) pps
+  rename_ vns tau (InvFiltPart x z pf pps) =
+    InvFiltPart x
+      <$> rename_ vns tau z
+      <*> rename_ vns tau pf
+      <*> mapM (rename_ vns tau) pps
   rename_ vns tau (FiltPart x y pf pps) =
     FiltPart x y <$> rename_ vns tau pf <*> mapM (rename_ vns tau) pps
   rename_ vns tau (For x pred) =
@@ -395,6 +400,12 @@ instance (Ord a, Renameable a, Rep a a, Unify a a, Hole a) => Unify (Property a)
     pure (s1 <> s2 <> s3)
   unify_ k (FiltPartInv x pf1 pps1) (FiltPartInv y pf2 pps2) | x == y = do
     unifiesPredicates k (zip (pf1 : pps1) (pf2 : pps2))
+  unify_ k (InvFiltPart x z1 pf1 pps1) (InvFiltPart y z2 pf2 pps2) | x == y = do
+    s <- unifyTuple k z1 z2
+    let lhs = map (repPredicate s) (pf1 : pps1)
+    let rhs = map (repPredicate s) (pf2 : pps2)
+    s' <- unifiesPredicates k (zip lhs rhs)
+    pure (s <> s')
   unify_ k (FiltPart y x pf1 pps1) (FiltPart y' x' pf2 pps2) | y == y', x == x' = do
     unifiesPredicates k (zip (pf1 : pps1) (pf2 : pps2))
   unify_ k (For x1 (Predicate i1 p1)) (For x2 (Predicate i2 p2))
@@ -428,6 +439,7 @@ instance (FreeVariables u, Ord u) => FreeVariables (Property u) where
   fv (Injective x Nothing) = fv x
   fv (BijectiveRCD x rcd img) = fv x <> fv rcd <> fv img
   fv (FiltPartInv x pf pps) = fv x <> fv pf <> S.unions (map fv pps)
+  fv (InvFiltPart x z pf pps) = fv x <> fv z <> fv pf <> S.unions (map fv pps)
   fv (FiltPart x y pf pps) = fv x <> fv y <> fv pf <> S.unions (map fv pps)
   fv (For x (Predicate i p)) = fv x <> fv p S.\\ S.singleton i
 

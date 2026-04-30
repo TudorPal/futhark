@@ -74,6 +74,9 @@ let part2indicesL 't [m][n]
           --     if c then j < p else j >= p
           --   ) csL seg_inds seg_parts
           -- in step1 && and step2 && and step3
+          -- For ... FiltPartInv.
+          -- sum of shape from 0 to k-1 to get offset
+          For inds (\_k -> m) 
           FiltPartInv inds (\_i -> true) (\i -> csL[i])
         } =
   let (seg_ids, flags) = segment_ids shape

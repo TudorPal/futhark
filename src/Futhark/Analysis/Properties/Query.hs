@@ -182,6 +182,7 @@ data Statement
     -- [c,d] (subset of [a,b]) is the image of this restricted f.
     PBijectiveRCD (SoP Symbol, SoP Symbol) (SoP Symbol, SoP Symbol)
   | PFiltPartInv (VName -> Symbol) [VName -> Symbol]
+  | PInvFiltPart (SoP Symbol, SoP Symbol) (VName -> Symbol) [VName -> Symbol]
 
 prove :: Property Symbol -> IndexFnM Answer
 prove prop = alreadyKnown prop `orM` matchProof prop
@@ -284,6 +285,8 @@ prove prop = alreadyKnown prop `orM` matchProof prop
             then pure Yes
             else pure Unknown
         _ -> pure Unknown
+    alreadyKnown (InvFiltPart {}) =
+      pure Unknown -- TODO: Implement alreadyKnown for InvFiltPart property
     alreadyKnown wts@(FiltPart y x _ _) = do
       res <- askFiltPart (Algebra.Var y)
       case res of
@@ -443,6 +446,9 @@ prove prop = alreadyKnown prop `orM` matchProof prop
     matchProof (FiltPartInv x pf pps) = do
       f_X <- getFn x
       proveFn (PFiltPartInv (predToFun pf) (map predToFun pps)) f_X
+    matchProof (InvFiltPart x z pf pps) = do
+      f_X <- getFn x
+      proveFn (PInvFiltPart z (predToFun pf) (map predToFun pps)) f_X
     matchProof (FiltPart y x pf pps) = do
       f_Y <- getFn y
       newProver (FPV2 f_Y x pf pps)
@@ -834,10 +840,65 @@ prove_ is_segmented (PBijectiveRCD (a, b) (c, d)) f@(IndexFn [[Forall i dom]] _)
   step1 `andM` step2
   where
     e @ x = rep (mkRep i (Var x)) e
--- prove_ baggage stmt@(PFiltPartInv _ _) f@(IndexFn [dims] _)
---   | length dims > 1 = do
---       f_flat <- flattenRank1IndexFn f
---       prove_ baggage stmt f_flat
+prove_ baggage (PInvFiltPart (za, zb) pf pps') f@(IndexFn [[Forall i dom]] _) = algebraContext f $ do
+  let p_otherwise x = foldl1 (:&&) [neg (pp x) | pp <- pps']
+  let pps = pps' <> [p_otherwise]
+
+  printM 1000 $
+    title "Proving InvFiltPart\n"
+      <> "  Z:\n"
+      <> prettyIndent 4 (za, zb)
+      <> "\n  filter:\n"
+      <> prettyIndent 4 (Predicate i $ pf i)
+      <> "\n  partition:\n"
+      <> prettyIndent 4 [Predicate i $ pp i | pp <- pps]
+      <> "\n  function:\n"
+      <> prettyIndent 4 f
+
+  -- Z is source-style half-open, so convert to inclusive range for PBijectiveRCD.
+  let img = (za, zb .-. int2SoP 1)
+  step1 <- prove_ baggage (PBijectiveRCD img img) f
+
+  -- Filtered-away indices must map outside Z.
+  let step2 = rollbackAlgEnv $ do
+        addRelShape (shape f)
+        allM [if_filtered_then_OOB g | g <- guards f]
+        where
+          if_filtered_then_OOB (c, e) = rollbackAlgEnv $ do
+            (c =>? pf i) `orM` (c =>? (e :< za :|| e :>= zb))
+
+  -- Stability of the kept order.
+  j <- newNameFromString "j"
+  let filtered_guards = [(c :&& pf i, e) | (c, e) <- guards f]
+  let step3 = newProver (MonGe LT i j dom (cases filtered_guards))
+
+  -- Partition predicates impose an ordering.
+  let isParted pp1 pp2 = algebraContext f $ do
+        addRelShape (shape f)
+        j +< i
+        printTrace 1000 ("InvFiltPart Step 4 " <> prettyStr (pp1 i, pp2 i)) $
+          allM [g `cmp` g' | g : gs <- tails filtered_guards, g' <- g : gs]
+        where
+          (c1, e1) `cmp` (c2, e2) =
+            do
+              ( (sop2Symbol (c1 @ j) :&& pp1 j)
+                  :&& (sop2Symbol (c2 @ i) :&& pp2 i)
+                )
+                =>? (e2 @ j :< e2 @ i)
+              `andM`
+                ( ( (sop2Symbol (c1 @ i) :&& pp1 i)
+                      :&& (sop2Symbol (c2 @ j) :&& pp2 j)
+                    )
+                    =>? (e1 @ i :< e2 @ j)
+                )
+
+  printM 1337 $
+    "# Checking partitions" <> prettyStr [(p i, q i) | p : pp <- tails pps, q <- pp]
+  let step4 = allM [isParted p q | p : pp <- tails pps, q <- pp]
+
+  pure step1 `andM` step2 `andM` step3 `andM` step4
+  where
+    fn @ idx = rep (mkRep i (Var idx)) fn
 prove_ baggage (PFiltPartInv pf pps') f@(IndexFn [[Forall i dom]] _) = algebraContext f $ do
   let p_otherwise x = foldl1 (:&&) [neg (pp x) | pp <- pps']
   let pps = pps' <> [p_otherwise]
