@@ -1178,23 +1178,61 @@ forwardPropertyPrelude f args =
             (pf, pps) <- propArgs
             pure (Bool True, pr $ Property.FiltPart y x pf pps)
     "FiltPart2" -> forwardPropertyPrelude "FiltPart" args
+    -- "For"
+    --   | [e_X, e_pred] <- getArgs args,
+    --     Just x <- justVName e_X,
+    --     Just (param_i, lam_p) <- parsePredicate e_pred -> do
+    --       -- Recursively parse the property body.
+    --       -- We expect the lambda body to evaluate to a Property.
+    --       -- Since we're parsing a property prelude, we can reuse forwardPropertyPrelude logic
+    --       -- if we can extract the function name and args again, OR general forward if it's an expression
+    --       -- that evaluates to a property.
+    --       -- However, properties in prelude are usually `Prop (Property u)`.
+    --       -- `forward` returns `[IndexFn]`.
+    --       -- We need to extract the property from the `IndexFn`.
+    --       (i, prop) <- inferLambdaIndexFn x (param_i, lam_p)\
+    --       case justSym prop of
+    --         Just (Prop p) ->
+    --           pure (IndexFn [] $ cases [(Bool True, pr $ Property.For x (Property.Predicate i p))])
+    --         val -> error $ "Body of For predicate must return a single property, got: " <> prettyStr val
     "For"
       | [e_X, e_pred] <- getArgs args,
         Just x <- justVName e_X,
-        Just (param_i, lam_p) <- parsePredicate e_pred -> do
-          -- Recursively parse the property body.
-          -- We expect the lambda body to evaluate to a Property.
-          -- Since we're parsing a property prelude, we can reuse forwardPropertyPrelude logic
-          -- if we can extract the function name and args again, OR general forward if it's an expression
-          -- that evaluates to a property.
-          -- However, properties in prelude are usually `Prop (Property u)`.
-          -- `forward` returns `[IndexFn]`.
-          -- We need to extract the property from the `IndexFn`.
-          (i, prop) <- inferLambdaIndexFn x (param_i, lam_p)
-          case justSym prop of
-            Just (Prop p) ->
-              pure (IndexFn [] $ cases [(Bool True, pr $ Property.For x (Property.Predicate i p))])
-            val -> error $ "Body of For predicate must return a single property, got: " <> prettyStr val
+        Just (param_k, lam_p) <- parsePredicate e_pred -> do
+          -- look up the index function of x, because the For property
+          -- gets its range from the outermost iterator of x
+          res <- lookupIndexFn x
+          case res of
+            Just [IndexFn (((Forall k dom) : _) : _) _] -> rollbackAlgEnv $ do
+              -- the lambda in For x (\k -> P) uses a source-level variable k
+              -- here we bind that lambda variable to the actual outer iterator of x
+              let idx_k = IndexFn [] $ cases [(Bool True, sym2SoP (Var k))]
+              bindLambdaBodyParams [(param_k, idx_k)]
+
+              -- this is the important part from the appendix rule:
+              -- k is not just some free variable, it ranges over the outer domain of x
+              -- adding this lets the solver know facts like 0 <= k < outer_size
+              addRelIterator (Forall k dom)
+
+              -- now we can forward the body of the lambda under that context
+              body_fs <- forward lam_p
+              case body_fs of
+                [IndexFn [] body_if]
+                  | Just e <- justSingleCase (IndexFn [] body_if)
+                  , Just (Prop p) <- justSym e ->
+                      pure $
+                        IndexFn [] $
+                          -- the result is a scalar property saying:
+                          -- For x (\k -> p)
+                          cases [(Bool True, pr $ Property.For x (Property.Predicate k p))]
+                _ ->
+                  error $
+                    "Body of For predicate must return a single property, got: "
+                      <> prettyStr body_fs
+            _ ->
+              error $
+                "For: expected x to have an outer iterator, got: "
+                  <> prettyStr res
     _ -> do
       error $
         "Properties must be in A-normal form and not use wildcards: " <> prettyStr f <> " " <> prettyStr (NE.map snd args)

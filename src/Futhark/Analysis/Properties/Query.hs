@@ -32,7 +32,7 @@ import Debug.Trace (trace)
 import Futhark.Analysis.Properties.AlgebraBridge
 import Futhark.Analysis.Properties.AlgebraPC.Symbol qualified as Algebra
 import Futhark.Analysis.Properties.EqSimplifier
-import Futhark.Analysis.Properties.Flatten (from1Dto2DM)
+import Futhark.Analysis.Properties.Flatten (from1Dto2DM, mkERow)
 import Futhark.Analysis.Properties.IndexFn
 import Futhark.Analysis.Properties.IndexFnPlus (dimSize, domainEnd, domainStart, intervalEnd, intervalStart, repCases, repDomain)
 import Futhark.Analysis.Properties.Monad
@@ -462,12 +462,59 @@ prove prop = alreadyKnown prop `orM` matchProof prop
       f_Y <- getFn y
       newProver (FPV2 f_Y x pf pps)
     matchProof (For x (Predicate i p)) = do
+      -- get the index function of x, because For ranges over the outer dimension of x
       f_x <- getFn x
       case f_x of
+        f_flat@(IndexFn [[Forall k d_outer, Forall i2 (Iota e2)]] body_x) ->
+          rollbackAlgEnv $ algebraContext f_flat $ do
+            -- this is the special flat 2d case:
+            -- x is represented with an outer iterator k and an inner iterator i2
+            addRelIterator (Forall k d_outer)
+
+            -- the property was written as For x (\i -> P)
+            -- here we replace that source-level binder i with the actual outer iterator k
+            let p_k =
+                  mapProperty
+                    (sop2Symbol . rep (mkRep i (sym2SoP (Var k))))
+                    p
+
+            case p_k of
+              InvFiltPart x1 z pf pps
+                | x1 == x -> do
+                    -- compute the row start offset:
+                    -- this is the sum of all previous row sizes
+                    e_row <- mkERow k e2
+
+                    -- make a row-local view of x:
+                    -- we drop the outer dimension and keep only the inner row dimension
+                    -- k still stays free in the expressions
+                    x_row <- newNameFromString "#for_flat_row"
+                    let f_row =
+                          IndexFn
+                            { shape = [[Forall i2 (Iota e2)]],
+                              body = body_x
+                            }
+
+                    -- the predicates in InvFiltPart were written for flat indices
+                    -- inside one row we want local row indices instead
+                    -- so we rewrite i_flat as e_row + i2
+                    let pf_row  = localiseFlatPred i2 e_row pf
+                    let pps_row = map (localiseFlatPred i2 e_row) pps
+
+                    -- insert the row-local function and prove the row-local property
+                    insertIndexFn x_row [f_row]
+                    prove $ InvFiltPart x_row z pf_row pps_row
+
+              _ ->
+                pure Unknown
+        
         IndexFn [[Forall k dom]] _ -> algebraContext f_x $ do
+          -- this is the old simple 1d case:
+          -- just substitute the For binder with the outer iterator of x
           addRelIterator (Forall k dom)
           prove $
             mapProperty (sop2Symbol . rep (mkRep i (sym2SoP (Var k)))) p
+        
         _ -> pure Unknown
 
     getFn vn = do
@@ -478,6 +525,15 @@ prove prop = alreadyKnown prop `orM` matchProof prop
 
     predToFun (Predicate vn e) arg =
       sop2Symbol $ rep (mkRep vn (sym2SoP $ Var arg)) e
+
+    -- rewrite a predicate that talks about flat indices
+    -- into a predicate that talks about row-local indices
+    -- by substituting i_flat with e_row (row offset) + i2 
+    -- (inner iterator of the row-local view)
+    localiseFlatPred i2 e_row (Predicate i3 p_body) =
+      Predicate i2 $
+        sop2Symbol $
+          rep (mkRep i3 (e_row .+. sym2SoP (Var i2))) p_body
 
 proveFn :: Statement -> IndexFn -> IndexFnM Answer
 proveFn (ForallSegments fprop) f@(IndexFn [[Forall _ (Cat k _ _)]] _) =
@@ -714,6 +770,9 @@ prove_ _ (PInjective rcd) fn@(IndexFn [[Forall i0 dom]] _) = algebraContext fn $
             oob `orM` neq
 
   let sorted_guards = sortGes i0 j dom (guards fn)
+  -- print sorted guards for debugging
+  -- sg <- sorted_guards
+  -- printM 10 $ "sorted_guards=" <> prettyStr sg
   let step2 = answerFromBool . isJust <$> sorted_guards -- sorting exists.
   k' <- newNameFromString "k'"
   let step3 = case dom of
@@ -740,7 +799,12 @@ prove_ _ (PInjective rcd) fn@(IndexFn [[Forall i0 dom]] _) = algebraContext fn $
             rep' = rep (mkRep k $ sym2SoP (Var k'))
             dom' = Cat k' m (rep' b)
             iter_j' = Forall j $ repDomain (mkRep i0 (Var j)) dom'
-
+  ans1 <- step1
+  ans2 <- step2
+  ans3 <- step3
+  printM 1 $ "PInjective step1=" <> prettyStr ans1
+  printM 1 $ "PInjective step2=" <> prettyStr ans2
+  printM 1 $ "PInjective step3=" <> prettyStr ans3
   step1 `andM` step2 `andM` step3
   where
     f @ x = rep (mkRep i0 (Var x)) f
@@ -867,6 +931,37 @@ prove_ baggage (PInvFiltPart (za, zb) pf pps') f@(IndexFn [[Forall i dom]] _) = 
   -- Z is source-style half-open, so convert to inclusive range for PBijectiveRCD.
   let img = (za, zb .-. int2SoP 1)
   step1 <- prove_ baggage (PBijectiveRCD img img) f
+  
+  -- -- step 1 shouldnt go through the generic PInjective.
+  -- -- For the flattened row-local case, a better proof is:
+  -- -- let m_true be the number of true values in the row
+  -- -- split the row interval Z into true part [za, za + m_true)
+  -- -- and false part [za + m_true, zb)]
+  -- -- We can then prove the true branch is bijective onto the true part
+  -- -- and the false branch is bijective onto the false part.
+
+  -- step1 <-
+  --   case (guards f, pps') of
+  --     ([g_true, g_false], [pp_true]) -> rollbackAlgEnv $ do
+  --       addRelShape (shape f)
+
+  --       -- number of values in the first partition inside this row
+  --       m_true <- inferFiltPartInvSize pp_true dom
+
+  --       let z_mid = za .+. m_true
+  --       let img_true  = (za, z_mid .-. int2SoP 1)
+  --       let img_false = (z_mid, zb .-. int2SoP 1)
+
+  --       let f_true  = IndexFn [[Forall i dom]] (cases [g_true])
+  --       let f_false = IndexFn [[Forall i dom]] (cases [g_false])
+
+  --       proveBijectiveMaybeEmpty img_true f_true
+  --         `andM`
+  --         proveBijectiveMaybeEmpty img_false f_false
+
+  --     _ ->
+  --       prove_ baggage (PBijectiveRCD img img) f
+
 
   -- Filtered-away indices must map outside Z.
   let step2 = rollbackAlgEnv $ do
@@ -905,9 +1000,27 @@ prove_ baggage (PInvFiltPart (za, zb) pf pps') f@(IndexFn [[Forall i dom]] _) = 
     "# Checking partitions" <> prettyStr [(p i, q i) | p : pp <- tails pps, q <- pp]
   let step4 = allM [isParted p q | p : pp <- tails pps, q <- pp]
 
+  ans1 <- pure step1
+  ans2 <- step2
+  ans3 <- step3
+  ans4 <- step4
+
+  printM 1 $ "PInvFiltPart step1=" <> prettyStr ans1
+  printM 1 $ "PInvFiltPart step2=" <> prettyStr ans2
+  printM 1 $ "PInvFiltPart step3=" <> prettyStr ans3
+  printM 1 $ "PInvFiltPart step4=" <> prettyStr ans4
+
   pure step1 `andM` step2 `andM` step3 `andM` step4
   where
     fn @ idx = rep (mkRep i (Var idx)) fn
+
+    proveBijectiveMaybeEmpty (lo, hi) g = do
+      nonempty <- lo $<= hi
+      empty <- lo $> hi
+      case (nonempty, empty) of
+        (Yes, _) -> prove_ baggage (PBijectiveRCD (lo, hi) (lo, hi)) g
+        (_, Yes) -> pure Yes
+        _ -> prove_ baggage (PBijectiveRCD (lo, hi) (lo, hi)) g
 prove_ baggage (PFiltPartInv pf pps') f@(IndexFn [[Forall i dom]] _) = algebraContext f $ do
   let p_otherwise x = foldl1 (:&&) [neg (pp x) | pp <- pps']
   let pps = pps' <> [p_otherwise]
