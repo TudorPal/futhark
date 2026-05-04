@@ -194,11 +194,20 @@ constructor jses opaqueTypes =
     this.types = {
       ${type_entries}
     };
+    this.entry = {};
+    ${entry_aliases}
+    ${array_aliases}
   }
   |]
   where
     entries = T.intercalate "," $ map dicEntry jses
     type_entries = T.intercalate "," $ map dicTypeEntry opaqueTypes
+    entry_aliases = T.unlines $ map entryAlias jses
+    array_aliases = T.unlines $ map arrayAlias arrays
+
+    arrays = nubOrd $ filter isArray (entryPointTypes ++ recordFieldTypes)
+    entryPointTypes = concatMap (\jse -> parameters jse ++ [ret jse]) jses
+    recordFieldTypes = [jsrfType rf | (_, JSOpaqueRecord fields) <- opaqueTypes, rf <- fields]
 
 getFreeFun :: T.Text
 getFreeFun =
@@ -236,6 +245,27 @@ getErrorFun =
     return str;
   }
   |]
+
+entryAlias :: JSEntryPoint -> T.Text
+entryAlias jse =
+  [text|this.entry["${ename}"] = this.${fname}.bind(this);|]
+  where
+    fname = GC.escapeName $ T.pack $ name jse
+    ename = T.pack $ name jse
+
+arrayAlias :: String -> T.Text
+arrayAlias typ =
+  [text|
+  this.${signature} = {
+    from_data: (data, ${dims}) => this.new_${signature}(data, ${dims}),
+    from_jsarray: (data) => this.new_${signature}_from_jsarray(data)
+  };
+  |]
+  where
+    d = dim typ
+    ftype = baseType typ
+    signature = T.pack $ ftype ++ "_" ++ show d ++ "d"
+    dims = T.pack $ intercalate ", " ["d" ++ show i | i <- [0 .. d - 1]]
 
 dicEntry :: JSEntryPoint -> T.Text
 dicEntry jse =
