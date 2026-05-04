@@ -14,7 +14,7 @@ globalThis.require = createRequire(import.meta.url);
 
 import { newFutharkContext } from "./build/array_api/array_api.mjs";
 
-newFutharkContext().then(fc => {
+newFutharkContext().then(async fc => {
   console.log();
   console.log("Testing array_api.fut");
   console.log();
@@ -97,7 +97,7 @@ newFutharkContext().then(fc => {
   }
 
   console.log("returned arrays ok");
-
+  
   fut_xs_i32_old.free();
   fut_xs_i32_new.free();
   fut_xs_i32_jsarray.free();
@@ -105,6 +105,31 @@ newFutharkContext().then(fc => {
   fut_xs_i64_new.free();
   fut_replicated_1d.free();
   fut_replicated_2d.free();
+
+  console.log("Testing WebGPU-style returned array methods");
+
+  const fut_values_arr = fc.entry.replicate_f32_1d(3n, 4.5);
+
+  assert.equal(typeof fut_values_arr.values, "function");
+  assert.equal(typeof fut_values_arr.get_shape, "function");
+  
+  const values = await fut_values_arr.values();
+  const shape = fut_values_arr.get_shape();
+  
+  assert.ok(values instanceof Float32Array);
+  assert.ok(shape instanceof BigInt64Array);
+  
+  assert.equal(shape.length, 1);
+  assert.equal(shape[0], 3n);
+  
+  assert.equal(values.length, 3);
+  for (let i = 0; i < values.length; i++) {
+    assert.ok(Math.abs(values[i] - 4.5) < 0.0001);
+  }
+
+  console.log("WebGPU-style returned array methods ok");
+
+  fut_values_arr.free();
 
   fc.free();
 

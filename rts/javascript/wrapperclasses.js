@@ -35,6 +35,10 @@ class FutharkArray {
     return Array.from(this.ctx.wasm.HEAP64.subarray(s, s + this.dim));
   }
 
+  get_shape() {
+    return BigInt64Array.from(this.shape());
+  }
+
   toTypedArray(dims = this.shape()) {
     this.validCheck();
     console.assert(dims.length === this.dim, "dim=%s,dims=%s", this.dim, dims.toString());
@@ -56,6 +60,10 @@ class FutharkArray {
         return Array.from(Array(d0), (x,i) => nest(offs + i * d1, ds.slice(1)));
       }
     })(0, dims);
+  }
+
+  async values() {
+    return this.toTypedArray();
   }
 }
 
