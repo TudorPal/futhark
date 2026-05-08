@@ -109,10 +109,10 @@ p =>? q
       p' <- simplify p
       rollbackAlgEnv
         ( do
-            printM 7 "  * ALGEBRA "
-            printAlgebra 7 p
-            printAlgebra 7 q
+            printM 7 (redString "  * ALGEBRA QUERY " <> greenString "p" <> " => " <> warningString "q")
             printAlgEnv 7
+            printAlgebra 7 greenString p
+            printAlgebra 7 warningString q
         )
       printTrace 6 (prettyIndent 2 p <> " =>?\n" <> prettyIndent 4 q) $
         pure (answerFromBool $ p' == q)
@@ -501,6 +501,14 @@ prove prop = alreadyKnown prop `orM` matchProof prop
                     let pf_row  = localiseFlatPred i2 e_row pf
                     let pps_row = map (localiseFlatPred i2 e_row) pps
 
+                    printM 0 (greenString "▒▒▒ For InvFiltPart")
+                    printM 0 (greenString "▒ f_x =\n" <> prettyStr f_x)
+                    printM 0 (greenString "▒ p_k =\n" <> prettyStr p_k)
+                    printM 0 (greenString "▒ e_row =\n" <> prettyStr e_row)
+                    printM 0 (greenString "▒ f_row =\n" <> prettyStr f_row)
+                    printM 0 (greenString "▒ pf_row =\n" <> prettyStr pf_row)
+                    printM 0 (greenString "▒ pps_row =\n" <> prettyStr pps_row)
+
                     -- insert the row-local function and prove the row-local property
                     insertIndexFn x_row [f_row]
                     prove $ InvFiltPart x_row z pf_row pps_row
@@ -515,7 +523,7 @@ prove prop = alreadyKnown prop `orM` matchProof prop
           prove $
             mapProperty (sop2Symbol . rep (mkRep i (sym2SoP (Var k)))) p
         
-        _ -> pure Unknown
+        _ -> pure Unknown -- Not implemented yet.
 
     getFn vn = do
       fs <- lookupIndexFn vn
@@ -720,8 +728,8 @@ newProver (FPV2 f_Y x pf pps) = do
 
 prove_ :: Bool -> Statement -> IndexFn -> IndexFnM Answer
 prove_ _ (PInjective rcd) fn@(IndexFn [[Forall i0 dom]] _) = algebraContext fn $ do
-  printM 10 $
-    title "Proving InjectiveRCD "
+  printM 3 $
+    blueString "▒" <> title "Proving InjectiveRCD "
       <> "\n  RCD = "
       <> prettyStr rcd
       <> "\n"
@@ -769,16 +777,19 @@ prove_ _ (PInjective rcd) fn@(IndexFn [[Forall i0 dom]] _) = algebraContext fn $
                     =>? (e @ i :/= e @ j)
             oob `orM` neq
 
+  printAlgEnv 2
+  printM 3 $ blueString "▒ i0 = " <> prettyStr (Var i0)
+  printM 3 $ blueString "▒ j = " <> prettyStr (Var j)
+  printM 3 $ blueString "▒ dom = " <> prettyStr dom
+  printM 3 $ blueString "▒ guards = " <> prettyStr (guards fn)
   let sorted_guards = sortGes i0 j dom (guards fn)
-  -- print sorted guards for debugging
-  -- sg <- sorted_guards
-  -- printM 10 $ "sorted_guards=" <> prettyStr sg
   let step2 = answerFromBool . isJust <$> sorted_guards -- sorting exists.
   k' <- newNameFromString "k'"
   let step3 = case dom of
         Iota {} -> pure Yes
         Cat k m b -> do
           gs <- sorted_guards
+          printM 3 $ blueString "▒ sorted_guards = " <> prettyStr gs
           case gs of
             Just gs' -> rollbackAlgEnv $ do
               let (p_min, e_min) = head gs'
@@ -802,15 +813,16 @@ prove_ _ (PInjective rcd) fn@(IndexFn [[Forall i0 dom]] _) = algebraContext fn $
   ans1 <- step1
   ans2 <- step2
   ans3 <- step3
-  printM 1 $ "PInjective step1=" <> prettyStr ans1
-  printM 1 $ "PInjective step2=" <> prettyStr ans2
-  printM 1 $ "PInjective step3=" <> prettyStr ans3
-  step1 `andM` step2 `andM` step3
+  printM 3 $ blueString "▒ " <> "PInjective step1=" <> prettyStr ans1
+  printM 3 $ blueString "▒ " <> "PInjective step2=" <> prettyStr ans2
+  printM 3 $ blueString "▒ " <> "PInjective step3=" <> prettyStr ans3
+  pure $ if isYes ans1 && isYes ans2 && isYes ans3 then Yes else Unknown
+  -- step1 `andM` step2 `andM` step3
   where
     f @ x = rep (mkRep i0 (Var x)) f
 prove_ is_segmented (PBijectiveRCD (a, b) (c, d)) f@(IndexFn [[Forall i dom]] _) = rollbackAlgEnv $ do
-  printM 1000 $
-    title "Proving BijectiveRCD "
+  printM 3 $
+    warningString "▒" <> title "Proving BijectiveRCD "
       <> "\n  RCD (a,b) = "
       <> prettyStr (a, b)
       <> "\n  RCD_Img (c,d) = "
@@ -917,8 +929,8 @@ prove_ baggage (PInvFiltPart (za, zb) pf pps') f@(IndexFn [[Forall i dom]] _) = 
   let p_otherwise x = foldl1 (:&&) [neg (pp x) | pp <- pps']
   let pps = pps' <> [p_otherwise]
 
-  printM 1000 $
-    title "Proving InvFiltPart\n"
+  printM 3 $
+    greenString "▒" <> title "Proving InvFiltPart\n"
       <> "  Z:\n"
       <> prettyIndent 4 (za, zb)
       <> "\n  filter:\n"
@@ -931,6 +943,7 @@ prove_ baggage (PInvFiltPart (za, zb) pf pps') f@(IndexFn [[Forall i dom]] _) = 
   -- Z is source-style half-open, so convert to inclusive range for PBijectiveRCD.
   let img = (za, zb .-. int2SoP 1)
   step1 <- prove_ baggage (PBijectiveRCD img img) f
+  printM 3 (greenString "▒ PInvFiltPart step1 = " <> prettyStr step1)
   
   -- -- step 1 shouldnt go through the generic PInjective.
   -- -- For the flattened row-local case, a better proof is:
@@ -1264,7 +1277,15 @@ sortGes i j d = sorted cmp
                   j +< i
                   p =>? (f @ i) `op` (g @ j)
              in case_i_lt_j `andM` case_i_gt_j
-      relationToOrder f_rel_g
+      rel <- relationToOrder f_rel_g
+      printAlgEnv 3
+      printM 3 $ blueString "▒▒ sortGes \n▒▒ p =\n" <> prettyStr p
+      let f_i :: SoP Symbol = f @ i
+      let g_j :: SoP Symbol = g @ j
+      printM 3 $ blueString "▒▒ f @ i =\n" <> prettyStr f_i
+      printM 3 $ blueString "▒▒ g @ j =\n" <> prettyStr g_j
+      printM 3 $ blueString "▒▒ sortGes rel " <> show rel
+      pure rel
 
     relationToOrder rel = do
       lt <- rel (:<)

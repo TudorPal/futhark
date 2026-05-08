@@ -246,8 +246,8 @@ infixr 4 $==
 
 infixr 4 $/=
 
-printAlgebra :: Int -> Symbol -> IndexFnM ()
-printAlgebra level = printM level <=< printAlg
+printAlgebra :: Int -> (String -> String) -> Symbol -> IndexFnM ()
+printAlgebra level f = printM level <=< fmap f . printAlg
 
 printAlg :: Symbol -> IndexFnM String
 printAlg (a :&& b) = (\x y -> x <> " ^ " <> y) <$> printAlg a <*> printAlg b
