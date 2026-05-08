@@ -465,8 +465,8 @@ prove prop = alreadyKnown prop `orM` matchProof prop
       -- get the index function of x, because For ranges over the outer dimension of x
       f_x <- getFn x
       case f_x of
-        f_flat@(IndexFn [[Forall k d_outer, Forall i2 (Iota e2)]] body_x) ->
-          rollbackAlgEnv $ algebraContext f_flat $ do
+        (IndexFn [[Forall k d_outer, Forall i2 (Iota e2)]] body_x) ->
+          rollbackAlgEnv $ do
             -- this is the special flat 2d case:
             -- x is represented with an outer iterator k and an inner iterator i2
             addRelIterator (Forall k d_outer)
