@@ -12,7 +12,6 @@ module Futhark.Analysis.Properties.Util
     greenString,
     blueString,
     rotations,
-    redString,
   )
 where
 
@@ -83,9 +82,6 @@ greenString s = "\ESC[32m" <> s <> "\ESC[0m"
 
 blueString :: (Semigroup a, IsString a) => a -> a
 blueString s = "\ESC[96m" <> s <> "\ESC[0m"
-
-redString :: (Semigroup a, IsString a) => a -> a
-redString s = "\ESC[91m" <> s <> "\ESC[0m"
 
 rotations :: [a] -> [[a]]
 rotations xs = [take n (drop i (cycle xs)) | i <- [0..n-1]]
