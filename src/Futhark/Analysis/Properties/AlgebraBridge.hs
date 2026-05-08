@@ -17,7 +17,7 @@ import Futhark.Analysis.Properties.Monad
 import Futhark.Analysis.Properties.Rule (Rule (..), applyRuleBook, vacuous)
 import Futhark.Analysis.Properties.Symbol
 import Futhark.Analysis.Properties.Traversals (ASTMappable (..), ASTMapper (..))
-import Futhark.Analysis.Properties.Unify (Substitution, Unify, renameSame, sub, unify)
+import Futhark.Analysis.Properties.Unify (Substitution, Unify, renameSame, sub, unify, renameM)
 import Futhark.MonadFreshNames (newVName)
 import Futhark.SoP.SoP (SoP, int2SoP, justConstant, sym2SoP, (.+.), (.-.))
 
@@ -43,7 +43,7 @@ simplify x = do
   where
     m :: ASTMapper Symbol IndexFnM =
       ASTMapper
-        { mapOnSymbol = simplifySymbol . toDNF
+        { mapOnSymbol = simplifySymbol <=< renameM . toDNF
         ,  mapOnSoP = simplifyAlgebra <=< applyRuleBook rulesSoP
         }
 

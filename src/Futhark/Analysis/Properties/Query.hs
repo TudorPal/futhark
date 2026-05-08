@@ -901,10 +901,12 @@ prove_ is_segmented (PBijectiveRCD (a, b) (c, d)) f@(IndexFn [[Forall i dom]] _)
 
               j_sum <- newVName "j"
               let cs = map ((@ j_sum) . sym2SoP . fst) guards_in_RCD
-              let size_X =
-                    if null cs
-                      then int2SoP 0
-                      else toSumOfSums j_sum start end $ foldl1 (.+.) cs
+              guards_in_RCD_are_exhaustive <- (== Bool True) <$> simplify (foldl1 (:||) (map sop2Symbol cs))
+
+              let size_X
+                    | null cs = int2SoP 0
+                    | guards_in_RCD_are_exhaustive = end .-. start .+. int2SoP 1
+                    | otherwise = toSumOfSums j_sum start end $ foldl1 (.+.) cs
 
               ans <- simplify $ size_RCD_image :== size_X
               printM 3 $ warningString "▒ (2.2) " <> prettyStr ans
