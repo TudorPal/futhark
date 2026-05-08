@@ -43,17 +43,17 @@ from1Dto2DM (Forall i1 (Iota e2)) (Forall i2 (Iota e3)) e_idx
        in pure [(i1, outer), (i2, e_idx .-. outer .*. e3)]
 
   | otherwise = do
-      printM 1 "from1Dto2D irregular start"
-      printM 1 $ "  eidx: " <> prettyStr e_idx
+      -- printM 3 "from1Dto2D irregular start"
+      -- printM 3 $ "  eidx: " <> prettyStr e_idx
 
       j <- newVName "j"
 
       -- row start as a function of i1
       let ub    = sym2SoP (Var i1) .-. int2SoP 1
       let e3_j  = rep (mkRep i1 (sym2SoP (Var j))) e3
-      printM 1 "  before eRow"
+      -- printM 3 "  before eRow"
       let eRow  = sumSoP j (int2SoP 0) ub e3_j
-      printM 1 "  after eRow"
+      -- printM 3 "  after eRow"
 
       -- %D(e_idx)
       let outer = sym2SoP (Ix e2 e3 e_idx)

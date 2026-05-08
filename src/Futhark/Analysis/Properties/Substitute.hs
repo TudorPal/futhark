@@ -121,10 +121,10 @@ propFlattenOnce k g f = runMaybeT $ do
     then fail "No match."
     else case (shape g !! k, shape f !! k) of
       ([Forall i1 (Iota e1)], df@[Forall i2 (Iota e2), Forall i3 (Iota e3)]) -> do
-        printM 1 $ "propFlattenOnce start k=" <> prettyStr k
-        printM 1 $ "  e1=" <> prettyStr e1
-        printM 1 $ "  e2=" <> prettyStr e2
-        printM 1 $ "  e3=" <> prettyStr e3
+        -- printM 3 $ "propFlattenOnce start k=" <> prettyStr k
+        -- printM 3 $ "  e1=" <> prettyStr e1
+        -- printM 3 $ "  e2=" <> prettyStr e2
+        -- printM 3 $ "  e3=" <> prettyStr e3
 
         if i2 `S.notMember` fv e3
           then do
@@ -142,19 +142,19 @@ propFlattenOnce k g f = runMaybeT $ do
                 fail "regular PropFlatten could not prove size equality"
 
           else do
-            printM 1 "  irregular branch"
+            -- printM 3 "  irregular branch"
             eRow <- lift $ mkERow i2 e3
             end  <- lift . rewrite $ rep (mkRep i2 e2) eRow
             ans  <- lift (e1 $== end)
-            printM 1 $ "  irregular ans=" <> prettyStr ans
+            -- printM 3 $ "  irregular ans=" <> prettyStr ans
             case ans of
               Yes -> do
                 let s = mkRep i1 (eRow .+. sym2SoP (Var i3))
                 let (l, _old : r) = splitAt k (shape g)
                 let res = g { shape = l <> (df : r), body = repCases s (body g) }
-                printM 1 $ "  irregular result shape=" <> prettyStr (shape res)
-                printM 1 $ "  irregular result body=" <> prettyStr (body res)
-                -- printM 1 $ "  irregular result full=" <> prettyStr res
+                -- printM 3 $ "  irregular result shape=" <> prettyStr (shape res)
+                -- printM 3 $ "  irregular result body=" <> prettyStr (body res)
+                -- printM 3 $ "  irregular result full=" <> prettyStr res
                 if res == g
                   then fail "irregular PropFlatten made no progress"
                   else pure res
@@ -239,21 +239,21 @@ substituteOnce f g_presub (f_apply, actual_args) = do
   vn <- newVName ("<" <> prettyString f_apply <> ">")
   g <- repApply vn g_presub
 
-  printM 1 $
-    "substituteOnce enter"
-      <> "\n  f_apply: " <> prettyStr f_apply
-      <> "\n  actual_args: " <> prettyStr actual_args
-      <> "\n  shape f: " <> prettyStr (shape f)
-      <> "\n  shape g_presub: " <> prettyStr (shape g_presub)
+  -- printM 3 $
+  --   "substituteOnce enter"
+  --     <> "\n  f_apply: " <> prettyStr f_apply
+  --     <> "\n  actual_args: " <> prettyStr actual_args
+  --     <> "\n  shape f: " <> prettyStr (shape f)
+  --     <> "\n  shape g_presub: " <> prettyStr (shape g_presub)
 
-  printM 1 $
-    "substituteOnce args shape info"
-      <> "\n  rank f: " <> prettyStr (rank f)
-      <> "\n  length actual_args: " <> prettyStr (length actual_args)
-      <> "\n  iterator count in shape f: " <> prettyStr (length (concat (shape f)))
+  -- printM 3 $
+  --   "substituteOnce args shape info"
+  --     <> "\n  rank f: " <> prettyStr (rank f)
+  --     <> "\n  length actual_args: " <> prettyStr (length actual_args)
+  --     <> "\n  iterator count in shape f: " <> prettyStr (length (concat (shape f)))
 
-  printM 1 $ "--- f ---" <> prettyStr (f)
-  printM 1 $ "--- g ---" <> prettyStr (g)
+  printM 3 $ "--- f ---" <> prettyStr (f)
+  printM 3 $ "--- g ---" <> prettyStr (g)
 
   args <- mkArgs
 
@@ -281,23 +281,23 @@ substituteOnce f g_presub (f_apply, actual_args) = do
           }
 
   mg1 <- applySubRules args g_sub
-  -- printM 1 "substituteOnce after applySubRules"
-  -- printM 1 $ "substituteOnce initial new_shape=" <> prettyStr new_shape
+  -- printM 3 "substituteOnce after applySubRules"
+  -- printM 3 $ "substituteOnce initial new_shape=" <> prettyStr new_shape
 
   mg2 <- case mg1 of
     Nothing ->
       pure Nothing
     Just g1 -> do
-      -- printM 1 $ "substituteOnce actual shape after applySubRules=" <> prettyStr (shape g1)
+      -- printM 3 $ "substituteOnce actual shape after applySubRules=" <> prettyStr (shape g1)
       Just <$> solveIx (shape g1) g1
 
-  -- printM 1 "substituteOnce after solveIx"
+  -- printM 3 "substituteOnce after solveIx"
   -- print the domain
-  printM 1 $ "HERE! substituteOnce domain after solveIx=" <> prettyStr (shape <$> mg2)
-  printM 1 $ "HERE! substituteOnce body after solveIx=" <> prettyStr (body <$> mg2)
+  printM 3 $ "substituteOnce domain after solveIx=" <> prettyStr (shape <$> mg2)
+  printM 3 $ "substituteOnce body after solveIx=" <> prettyStr (body <$> mg2)
 
   mg3 <- traverse simplify mg2
-  -- printM 1 "substituteOnce after simplify"
+  -- printM 3 "substituteOnce after simplify"
 
   let mg3' = cleanupIndexFn <$> mg3
   

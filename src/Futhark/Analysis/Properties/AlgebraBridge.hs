@@ -75,13 +75,13 @@ simplify x = do
 
     simplifyAlgebra :: SoP Symbol -> IndexFnM (SoP Symbol)
     simplifyAlgebra x = rollbackAlgEnv $ do
-      -- printM 1 $ "simplifyAlgebra in=" <> prettyStr x
+      -- printM 3 $ "simplifyAlgebra in=" <> prettyStr x
       y <- toAlgebra x
-      -- printM 1 "simplifyAlgebra after toAlgebra"
+      -- printM 3 "simplifyAlgebra after toAlgebra"
       z <- Algebra.simplify y
-      -- printM 1 "simplifyAlgebra after Algebra.simplify"
+      -- printM 3 "simplifyAlgebra after Algebra.simplify"
       r <- fromAlgebra z
-      -- printM 1 $ "simplifyAlgebra out=" <> prettyStr r
+      -- printM 3 $ "simplifyAlgebra out=" <> prettyStr r
       pure r
 
     simplifySymbol :: Symbol -> IndexFnM Symbol
@@ -177,14 +177,14 @@ simplify x = do
     contradiction2 _ = pure Nothing
 
     refine relation = do
-      -- printM 1 $ "simplifySymbol refine relation=" <> prettyStr relation
+      -- printM 3 $ "simplifySymbol refine relation=" <> prettyStr relation
       b <- solve relation
-      -- printM 1 $ "simplifySymbol solve result=" <> prettyStr b
+      -- printM 3 $ "simplifySymbol solve result=" <> prettyStr b
       case b of
         Yes -> pure $ Bool True
         Unknown -> do
           not_b <- solve (neg relation)
-          -- printM 1 $ "simplifySymbol neg solve result=" <> prettyStr not_b
+          -- printM 3 $ "simplifySymbol neg solve result=" <> prettyStr not_b
           case not_b of
             Yes -> pure $ Bool False
             Unknown -> pure relation

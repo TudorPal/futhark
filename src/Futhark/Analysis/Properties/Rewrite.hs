@@ -104,7 +104,7 @@ rewriteWithoutRules =
 
 solveIx :: (ASTMappable Symbol a) => [[Quantified Domain]] -> a -> IndexFnM a
 solveIx [dim] = do
-  printM 1 $ "solveIx start dim=" <> prettyStr dim
+  -- printM 3 $ "solveIx start dim=" <> prettyStr dim
   res <-
     astMap
       ( ASTMapper
@@ -112,7 +112,7 @@ solveIx [dim] = do
             mapOnSoP = applyRuleBook rulesSoP
           }
       )
-  printM 1 "solveIx done"
+  -- printM 3 "solveIx done"
   pure res
   where
     rulesSoP :: IndexFnM [Rule (SoP Symbol) Symbol IndexFnM]
@@ -145,7 +145,7 @@ solveIx [dim] = do
               from = sym2SoP (Sum h1 (int2SoP 0) (hole h2) (Apply (Hole h3) [hole h1])) 
               .-. sym2SoP (Sum h1 (int2SoP 0) (hole h2 .-. int2SoP 1) (Apply (Hole h3) [hole h1])),
               to = \s -> do
-                printM 1 "solveIx SolveNestedSum fired"
+                -- printM 3 "solveIx SolveNestedSum fired"
                 sub s $ sym2SoP (Apply (Hole h3) [hole h2]),
               sideCondition = vacuous
             }
@@ -194,31 +194,30 @@ solveIdx1 dim@[Forall i1 (Iota _), Forall _ (Iota e2)] sym@(Ix _ m e_idx)
         Unknown -> pure sym
   -- irregular flattened case
   | otherwise = rollbackAlgEnv $ do
-      -- print Ix
-      -- printM 1 $ "solveIdx1 irregular Ix: " <> prettyStr sym
-      -- printM 1 $ "============================="
-      -- printM 1 $ "solveIdx1 irregular e2=" <> prettyStr e2
-      -- printM 1 $ "solveIdx1 irregular m =" <> prettyStr m
+      -- printM 3 $ "solveIdx1 irregular Ix: " <> prettyStr sym
+      -- printM 3 $ "============================="
+      -- printM 3 $ "solveIdx1 irregular e2=" <> prettyStr e2
+      -- printM 3 $ "solveIdx1 irregular m =" <> prettyStr m
       
-      -- printM 1 $ "solveIdx1 irregular e_idx=" <> prettyStr e_idx
+      -- printM 3 $ "solveIdx1 irregular e_idx=" <> prettyStr e_idx
       
       addRelDim dim
       dimensions_match <- e2 `unifiesWith` m
       eRow <- mkERow i1 e2
-      -- printM 1 $ "solveIdx1 irregular eRow=" <> prettyStr eRow
+      -- printM 3 $ "solveIdx1 irregular eRow=" <> prettyStr eRow
       q <-
         if dimensions_match
           then Bool True =>? (eRow :<= e_idx :&& e_idx :< eRow .+. e2)
           else pure Unknown
-      -- printM 1 $ "solveIdx1 irregular q=" <> prettyStr q
+      -- printM 3 $ "solveIdx1 irregular q=" <> prettyStr q
       case q of
         Yes -> pure (Var i1)
         Unknown -> do
-          -- printM 1 $ "solveIdx1 saw Ix but could not solve it: " <> prettyStr sym
+          -- printM 3 $ "solveIdx1 saw Ix but could not solve it: " <> prettyStr sym
           pure sym
 -- solveIdx1 dim sym@(Ix _ _ _)
 --   = do
---       printM 1 $ "solveIdx1 saw Ix but could not solve it: " <> prettyStr sym
+--       printM 3 $ "solveIdx1 saw Ix but could not solve it: " <> prettyStr sym
 --       pure sym
 solveIdx1 _ sym = pure sym
 

@@ -402,8 +402,8 @@ rulesIndexFn = do
             e_rec <- rep (mkRep i2' . sym2SoP $ Var x) <$> sub s (hole h2)
             let e_sum = toSumOfSums x (int2SoP 1) (sym2SoP (Var i2')) e_rec
 
-            printM 1 $ "e_base: " ++ prettyStr e_base
-            printM 1 $ "e_sum: " ++ prettyStr e_sum
+            -- printM 3 $ "e_base: " ++ prettyStr e_base
+            -- printM 3 $ "e_sum: " ++ prettyStr e_sum
             subIndexFn s $
               IndexFn
                 { shape = [[Forall i1 (Iota (hole n)), Forall i2 (Iota (hole m))]],
