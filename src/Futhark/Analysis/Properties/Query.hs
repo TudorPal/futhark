@@ -515,14 +515,14 @@ prove prop = alreadyKnown prop `orM` matchProof prop
 
               _ ->
                 pure Unknown
-        
+
         IndexFn [[Forall k dom]] _ -> algebraContext f_x $ do
           -- this is the old simple 1d case:
           -- just substitute the For binder with the outer iterator of x
           addRelIterator (Forall k dom)
           prove $
             mapProperty (sop2Symbol . rep (mkRep i (sym2SoP (Var k)))) p
-        
+
         _ -> pure Unknown -- Not implemented yet.
 
     getFn vn = do
@@ -896,6 +896,8 @@ prove_ is_segmented (PBijectiveRCD (a, b) (c, d)) f@(IndexFn [[Forall i dom]] _)
 
               start <- simplify $ if is_segmented then intervalStart dom else domainStart dom
               end <- simplify $ if is_segmented then intervalEnd dom else domainEnd dom
+              printM 3 $ warningString "▒ (2.2) start " <> prettyStr start
+              printM 3 $ warningString "▒ (2.2) end " <> prettyStr end
 
               j_sum <- newVName "j"
               let cs = map ((@ j_sum) . sym2SoP . fst) guards_in_RCD
@@ -905,9 +907,7 @@ prove_ is_segmented (PBijectiveRCD (a, b) (c, d)) f@(IndexFn [[Forall i dom]] _)
                       else toSumOfSums j_sum start end $ foldl1 (.+.) cs
 
               ans <- simplify $ size_RCD_image :== size_X
-              printM 1000 $ "size_RCD_image " <> prettyStr size_RCD_image
-              printM 1000 $ "size_X         " <> prettyStr size_X
-              printM 1000 $ "Step (2.2) " <> prettyStr ans
+              printM 3 $ warningString "▒ (2.2) " <> prettyStr ans
               case ans of
                 Bool True -> pure Yes
                 _ -> pure Unknown
@@ -917,6 +917,14 @@ prove_ is_segmented (PBijectiveRCD (a, b) (c, d)) f@(IndexFn [[Forall i dom]] _)
               printTrace 1000 "Step (2.3)" $
                 allM $
                   map (\(p, e) -> p =>? (c :<= e :&& e :<= d)) guards_in_RCD
+
+        printM 3 (warningString "▒ step 2" <> prettyStr infinity)
+        b_rcd_sanity_check <- rcd_sanity_check
+        printM 3 (warningString "▒ rcd_sanity_check " <> prettyStr b_rcd_sanity_check)
+        b_step_2_2 <- step_2_2
+        printM 3 (warningString "▒ step_2_2 " <> prettyStr b_step_2_2)
+        b_step_2_3 <- step_2_3
+        printM 3 (warningString "▒ step_2_3 " <> prettyStr b_step_2_3)
 
         printM 1000 $ "f restricted to X:\n" <> prettyIndent 4 fX
         printTrace 1000 "Step (2)" $
@@ -943,8 +951,8 @@ prove_ baggage (PInvFiltPart (za, zb) pf pps') f@(IndexFn [[Forall i dom]] _) = 
   -- Z is source-style half-open, so convert to inclusive range for PBijectiveRCD.
   let img = (za, zb .-. int2SoP 1)
   step1 <- prove_ baggage (PBijectiveRCD img img) f
-  printM 3 (greenString "▒ PInvFiltPart step1 = " <> prettyStr step1)
-  
+  printM 3 (greenString "▒ PInvFiltPart step1 (bijectivity) = " <> prettyStr step1)
+
   -- -- step 1 shouldnt go through the generic PInjective.
   -- -- For the flattened row-local case, a better proof is:
   -- -- let m_true be the number of true values in the row
