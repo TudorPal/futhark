@@ -52,6 +52,19 @@ newFutharkContext().then(async fc => {
 
   console.log("new 1D from_jsarray API ok");
 
+  console.log("Testing WebGPU-style array type lookup");
+
+  assert.ok(fc.types["[]i32"], 'fc.types["[]i32"] should exist');
+  assert.equal(fc.types["[]i32"], fc.i32_1d);
+
+  const I32_1D = fc.types["[]i32"];
+  const fut_xs_i32_from_type = I32_1D.from_data(xs_i32, xs_i32.length);
+
+  const type_lookup_sum_i32 = fc.entry.sum_i32_1d(fut_xs_i32_from_type);
+  assert.equal(type_lookup_sum_i32, 15);
+
+  console.log("array type lookup ok");
+
   console.log("Testing original WASM 2D array constructor API");
 
   const xs_i64 = new BigInt64Array([1n, 2n, 3n, 4n, 5n, 6n]);

@@ -197,6 +197,7 @@ constructor jses opaqueTypes =
     this.entry = {};
     ${entry_aliases}
     ${array_aliases}
+    ${array_type_aliases}
   }
   |]
   where
@@ -204,6 +205,7 @@ constructor jses opaqueTypes =
     type_entries = T.intercalate "," $ map dicTypeEntry opaqueTypes
     entry_aliases = T.unlines $ map entryAlias jses
     array_aliases = T.unlines $ map arrayAlias arrays
+    array_type_aliases = T.unlines $ map arrayTypeAlias arrays
 
     arrays = nubOrd $ filter isArray (entryPointTypes ++ recordFieldTypes)
     entryPointTypes = concatMap (\jse -> parameters jse ++ [ret jse]) jses
@@ -266,6 +268,15 @@ arrayAlias typ =
     ftype = baseType typ
     signature = T.pack $ ftype ++ "_" ++ show d ++ "d"
     dims = T.pack $ intercalate ", " ["d" ++ show i | i <- [0 .. d - 1]]
+
+arrayTypeAlias :: String -> T.Text
+arrayTypeAlias typ =
+  [text|this.types["${typ_text}"] = this.${signature};|]
+  where
+    d = dim typ
+    ftype = baseType typ
+    signature = T.pack $ ftype ++ "_" ++ show d ++ "d"
+    typ_text = T.pack typ
 
 dicEntry :: JSEntryPoint -> T.Text
 dicEntry jse =
