@@ -218,11 +218,21 @@ longer used.
 Entry Points
 ------------
 
-Each entry point in the compiled futhark program for the WASM wrapper has an entry point method on
-the ``FutharkContext``, and for the WebGPU wrapper, each entry point is exposed through the ``entry`` field of the ``FutharkModule`` object:
+Each entry point in the compiled Futhark program is exposed through the
+``entry`` field of the top-level wrapper object. For example, an entry
+point named ``main`` can be called as:
 
-.. js:function:: FutharkContext.<entry_point_name>(in1, ..., inN)
+.. code-block:: javascript
 
-  The entry point function taking the N arguments of the Futhark entry point
-  function, and returns the result. For the WASM wrapper, if the result is a tuple the return value
-  is an array. For the WebGPU wrapper, if there are multiple outputs, the return value is an array of outputs in order.
+   const res = await fut.entry.main(in1, ..., inN);
+
+.. js:function:: fut.entry.<entry_point_name>(in1, ..., inN)
+
+   The entry point function takes the JavaScript representations of the
+   Futhark entry point arguments and returns the result.
+
+   If the entry point has multiple outputs, the return value is an array
+   containing the outputs in order.
+
+In WASM examples the top-level object is often named ``fc`` instead of
+``fut``, but the entry point access pattern is the same.
