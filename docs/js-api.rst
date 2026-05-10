@@ -9,7 +9,7 @@ when used with ``--library``.  This chapter describes the API exposed by
 those wrappers.
 
 The exact generated files and the top-level JavaScript interface differ
-somewhat between the WASM-style backends and the WebGPU backend, so the
+somewhat between the WASM backend and the WebGPU backend, so the
 relevant differences are described below.
 
 First a warning: **the JavaScript API is experimental**.  It may
@@ -138,31 +138,8 @@ are represented by ``FutharkOpaque`` objects.
 FutharkArray
 ------------
 
-The exact ``FutharkArray`` API differs slightly between backends.
-
-WASM wrapper
-~~~~~~~~~~~~
-
-.. js:function:: FutharkArray.toArray()
-
-   Returns a nested JavaScript array.
-
-.. js:function:: FutharkArray.toTypedArray()
-
-   Returns a flat typed array of the underlying data.
-
-.. js:function:: FutharkArray.shape()
-
-   Returns the shape of the ``FutharkArray`` as an array of ``BigInt`` values.
-
-.. js:function:: FutharkArray.free()
-
-   Frees the memory used by the ``FutharkArray``.
-
-WebGPU wrapper
-~~~~~~~~~~~~~~
-
-The WebGPU backend generates per-type subclasses of ``FutharkArray``.
+Arrays are represented by ``FutharkArray`` objects.  The common array API is
+shared by the WASM backend and the WebGPU backend.
 
 .. js:function:: FutharkArray.get_shape()
 
@@ -176,11 +153,43 @@ The WebGPU backend generates per-type subclasses of ``FutharkArray``.
 
    Frees the memory used by the ``FutharkArray``.
 
-Array construction also differs a bit between backends.
+The WASM backend also provides a few older convenience methods.
 
-For the WASM wrapper, ``FutharkContext`` contains constructor methods for
-each array type that appears in an entry point.  For example, for the
-type ``[]i32``:
+.. js:function:: FutharkArray.toArray()
+
+   Returns a nested JavaScript array.
+
+.. js:function:: FutharkArray.toTypedArray()
+
+   Returns a flat typed array of the underlying data.
+
+.. js:function:: FutharkArray.shape()
+
+   Returns the shape of the ``FutharkArray`` as an array of ``BigInt`` values.
+
+Array construction
+~~~~~~~~~~~~~~~~~~
+
+Each array type used by an entry point is exposed through a generated
+constructor object.  For example, for the type ``[]i32``:
+
+.. js:function:: fut.i32_1d.from_data(data, dim0)
+
+   Creates and returns a one-dimensional ``i32`` ``FutharkArray`` from
+   a JavaScript ``Array`` or the corresponding typed array, with the
+   given shape.
+
+For the WASM backend, the generated constructor object also
+provides a convenience method for nested JavaScript arrays.
+
+.. js:function:: fut.i32_1d.from_jsarray(jsarray)
+
+   Creates and returns a one-dimensional ``i32`` ``FutharkArray`` from
+   a JavaScript array.  For higher-dimensional arrays, the JavaScript
+   array is expected to be nested according to the array rank.
+
+The WASM backend also keeps the older constructor methods on
+``FutharkContext`` for backwards compatibility.
 
 .. js:function:: FutharkContext.new_i32_1d_from_jsarray(jsarray)
 
@@ -191,16 +200,6 @@ type ``[]i32``:
 
    Creates and returns a one-dimensional ``i32`` ``FutharkArray``
    representing the typed array ``array``, with shape ``dim0``.
-
-For the WebGPU wrapper, each generated array type is represented by its
-own generated class, available through the ``FutharkModule`` object.
-
-.. js:function:: fut.i32_1d.from_data(data, dim0)
-
-   Creates and returns a one-dimensional ``i32`` ``FutharkArray`` from
-   a JavaScript ``Array`` or the corresponding typed array, with the
-   given shape.
-
 
 FutharkOpaque
 -------------

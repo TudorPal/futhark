@@ -36,7 +36,7 @@ newFutharkContext().then(async fc => {
 
   const fut_xs_i32_new = fc.i32_1d.from_data(xs_i32, xs_i32.length);
 
-  const new_sum_i32 = fc.entry.sum_i32_1d(fut_xs_i32_new);
+  const new_sum_i32 = await fc.entry.sum_i32_1d(fut_xs_i32_new);
   assert.equal(new_sum_i32, 15);
 
   console.log("new 1D constructor API ok");
@@ -82,7 +82,7 @@ newFutharkContext().then(async fc => {
 
   const fut_xs_i64_new = fc.i64_2d.from_data(xs_i64, 2, 3);
 
-  const new_sum_i64 = fc.entry.sum_i64_2d(fut_xs_i64_new);
+  const new_sum_i64 = await fc.entry.sum_i64_2d(fut_xs_i64_new);
   assert.equal(new_sum_i64, 21n);
 
   console.log("new 2D constructor API ok");
@@ -113,6 +113,7 @@ newFutharkContext().then(async fc => {
   
   fut_xs_i32_old.free();
   fut_xs_i32_new.free();
+  fut_xs_i32_from_type.free();
   fut_xs_i32_jsarray.free();
   fut_xs_i64_old.free();
   fut_xs_i64_new.free();
@@ -143,6 +144,30 @@ newFutharkContext().then(async fc => {
   console.log("WebGPU-style returned array methods ok");
 
   fut_values_arr.free();
+
+  console.log("Testing shared WebGPU-style API only");
+
+  const shared_xs = fc.i32_1d.from_data(new Int32Array([10, 20, 30]), 3);
+  const shared_sum = await fc.entry.sum_i32_1d(shared_xs);
+
+  assert.equal(shared_sum, 60);
+
+  const shared_arr = await fc.entry.replicate_f32_1d(2n, 7.5);
+  const shared_values = await shared_arr.values();
+  const shared_shape = shared_arr.get_shape();
+
+  assert.ok(shared_values instanceof Float32Array);
+  assert.ok(shared_shape instanceof BigInt64Array);
+
+  assert.equal(shared_shape[0], 2n);
+  assert.equal(shared_values.length, 2);
+  assert.ok(Math.abs(shared_values[0] - 7.5) < 0.0001);
+  assert.ok(Math.abs(shared_values[1] - 7.5) < 0.0001);
+
+  shared_xs.free();
+  shared_arr.free();
+
+  console.log("shared WebGPU-style API only ok");
 
   fc.free();
 
