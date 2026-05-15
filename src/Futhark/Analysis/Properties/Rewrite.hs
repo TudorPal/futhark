@@ -12,7 +12,7 @@ import Futhark.Analysis.Properties.Query ((=>?), unifiesWith)
 import Futhark.Analysis.Properties.Rule (Rule (..), applyRuleBook, rulesIndexFn, vacuous)
 import Futhark.Analysis.Properties.Symbol (Symbol (..), toCNF)
 import Futhark.Analysis.Properties.Traversals
-import Futhark.Analysis.Properties.Unify (Renameable, fv, renameSame, sub)
+import Futhark.Analysis.Properties.Unify (Renameable, fv, renameSame, sub, Rep (rep), ReplacementBuilder (mkRep))
 import Futhark.MonadFreshNames (newVName)
 import Futhark.SoP.SoP (SoP, filterSoP, int2SoP, isZero, justConstant, justSym, sym2SoP, term2SoP, (.*.), (.+.), (.-.), (./.))
 import Language.Futhark (VName)
@@ -192,33 +192,124 @@ solveIdx1 dim@[Forall i1 (Iota _), Forall _ (Iota e2)] sym@(Ix _ m e_idx)
       case q of
         Yes -> pure (Var i1)
         Unknown -> pure sym
-  -- irregular flattened case
+
+  -- Irregular flattened case:
+  -- current shape is [for i1 < n, for i2 < shape[i1]]
+  -- and we want to solve Ix[n, shape[i1]](flat_index) back to i1.
   | otherwise = rollbackAlgEnv $ do
-      -- printM 3 $ "solveIdx1 irregular Ix: " <> prettyStr sym
-      -- printM 3 $ "============================="
-      -- printM 3 $ "solveIdx1 irregular e2=" <> prettyStr e2
-      -- printM 3 $ "solveIdx1 irregular m =" <> prettyStr m
-      
-      -- printM 3 $ "solveIdx1 irregular e_idx=" <> prettyStr e_idx
-      
+      -- printM 3 $
+      --   "solveIdx1 irregular enter"
+      --     <> "\n  dim: " <> prettyStr dim
+      --     <> "\n  sym: " <> prettyStr sym
+      --     <> "\n  m: " <> prettyStr m
+      --     <> "\n  e2: " <> prettyStr e2
+      --     <> "\n  e_idx: " <> prettyStr e_idx
+
       addRelDim dim
       dimensions_match <- e2 `unifiesWith` m
       eRow <- mkERow i1 e2
-      -- printM 3 $ "solveIdx1 irregular eRow=" <> prettyStr eRow
+
+      -- printM 3 $
+      --   "solveIdx1 irregular setup"
+      --     <> "\n  dimensions_match: " <> prettyStr dimensions_match
+      --     <> "\n  eRow: " <> prettyStr eRow
+      --     <> "\n  wanted lower: " <> prettyStr (eRow :<= e_idx)
+      --     <> "\n  wanted upper: " <> prettyStr (e_idx :< eRow .+. e2)
+
       q <-
         if dimensions_match
           then Bool True =>? (eRow :<= e_idx :&& e_idx :< eRow .+. e2)
           else pure Unknown
-      -- printM 3 $ "solveIdx1 irregular q=" <> prettyStr q
+
+      -- printM 3 $
+      --   "solveIdx1 irregular bounds answer=" <> prettyStr q
+
       case q of
-        Yes -> pure (Var i1)
+        Yes -> do
+          -- printM 3 $
+          --   "solveIdx1 irregular solved"
+          --     <> "\n  " <> prettyStr sym
+          --     <> "\n  => " <> prettyStr (Var i1)
+          pure (Var i1)
         Unknown -> do
-          -- printM 3 $ "solveIdx1 saw Ix but could not solve it: " <> prettyStr sym
+          -- printM 3 $
+          --   "solveIdx1 irregular failed"
+          --     <> "\n  kept: " <> prettyStr sym
           pure sym
--- solveIdx1 dim sym@(Ix _ _ _)
---   = do
---       printM 3 $ "solveIdx1 saw Ix but could not solve it: " <> prettyStr sym
---       pure sym
+
+-- 1D boundary case.
+--
+-- This handles expressions that occur while simplifying arrays like lst.
+-- The current shape is only [for k < m], but the expression still contains
+-- an Ix from the flattened 2D representation, for example:
+--
+--   Ix[m, shape[old_k]](-1 + sum shape[0..k])
+--
+-- If the flat index is inside the current row k, then the Ix should be k.
+-- This is especially needed under the branch shape[k] /= 0.
+solveIdx1 dim@[Forall k (Iota n)] sym@(Ix n' e_inner e_idx)
+  | Just (Apply _ [arg]) <- justSym e_inner,
+    Just (Var old_k) <- justSym arg = rollbackAlgEnv $ do
+      addRelDim dim
+
+      dimensions_match <- n `unifiesWith` n'
+
+      -- e_inner may mention an old outer iterator from the flattened shape.
+      -- Replace it with the current 1D iterator k.
+      --
+      -- For example:
+      --   shape[old_k]  becomes  shape[k]
+      let e_inner_k =
+            rep (mkRep old_k (sym2SoP (Var k))) e_inner
+
+      -- Row start for the current row k:
+      --   sum shape[0..k-1]
+      eRow <- mkERow k e_inner_k
+
+      let lower = eRow :<= e_idx
+      let upper = e_idx :< eRow .+. e_inner_k
+
+      -- printM 3 $
+      --   "solveIdx1 1D boundary-Ix enter"
+      --     <> "\n  dim: " <> prettyStr dim
+      --     <> "\n  sym: " <> prettyStr sym
+      --     <> "\n  n': " <> prettyStr n'
+      --     <> "\n  n: " <> prettyStr n
+      --     <> "\n  e_inner: " <> prettyStr e_inner
+      --     <> "\n  e_inner_k: " <> prettyStr e_inner_k
+      --     <> "\n  e_idx: " <> prettyStr e_idx
+      --     <> "\n  eRow: " <> prettyStr eRow
+      --     <> "\n  wanted lower: " <> prettyStr lower
+      --     <> "\n  wanted upper: " <> prettyStr upper
+      --     <> "\n  dimensions_match: " <> prettyStr dimensions_match
+
+      q <-
+        if dimensions_match
+          then Bool True =>? (lower :&& upper)
+          else pure Unknown
+
+      -- printM 3 $
+      --   "solveIdx1 1D boundary-Ix bounds answer=" <> prettyStr q
+
+      case q of
+        Yes -> do
+          -- printM 3 $
+          --   "solveIdx1 1D boundary-Ix solved"
+          --     <> "\n  " <> prettyStr sym
+          --     <> "\n  => " <> prettyStr (Var k)
+          pure (Var k)
+        Unknown -> do
+          -- printM 3 $
+          --   "solveIdx1 1D boundary-Ix failed"
+          --     <> "\n  kept: " <> prettyStr sym
+          pure sym
+
+solveIdx1 _ sym@(Ix _ _ _) = do
+  printM 3 $
+    "solveIdx1 saw Ix but shape did not match known Ix case"
+      <> "\n  sym: " <> prettyStr sym
+  pure sym
+
 solveIdx1 _ sym = pure sym
 
 solveIdxZero :: p -> Symbol -> IndexFnM (SoP Symbol)

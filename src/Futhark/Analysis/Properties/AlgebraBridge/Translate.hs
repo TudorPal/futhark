@@ -82,6 +82,7 @@ instance AlgTranslatable (Property Algebra.Symbol) (Property Symbol) where
     (Injective x Nothing) -> pure $ Injective x Nothing
     (BijectiveRCD x rcd img) -> BijectiveRCD x <$> fromAlgebra rcd <*> fromAlgebra img
     (FiltPartInv x pf pps) -> FiltPartInv x <$> fromAlgebra pf <*> mapM fromAlgebra pps
+    (InvFiltPart x z pf pps) -> InvFiltPart x <$> fromAlgebra z <*> fromAlgebra pf <*> mapM fromAlgebra pps
     (FiltPart y x pf pps) -> FiltPart y x <$> fromAlgebra pf <*> mapM fromAlgebra pps
     (For x (Predicate i p)) -> For x . Predicate i <$> fromAlgebra p
   toAlgebra = \case
@@ -98,6 +99,7 @@ instance AlgTranslatable (Property Algebra.Symbol) (Property Symbol) where
     (Injective x Nothing) -> pure $ Injective x Nothing
     (BijectiveRCD x rcd img) -> BijectiveRCD x <$> toAlgebra rcd <*> toAlgebra img
     (FiltPartInv x pf pps) -> FiltPartInv x <$> toAlgebra pf <*> mapM toAlgebra pps
+    (InvFiltPart x z pf pps) -> InvFiltPart x <$> toAlgebra z <*> toAlgebra pf <*> mapM toAlgebra pps
     (FiltPart y x pf pps) -> FiltPart y x <$> toAlgebra pf <*> mapM toAlgebra pps
     (For x (Predicate i p)) -> For x . Predicate i <$> toAlgebra p
 

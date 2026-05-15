@@ -11,9 +11,9 @@ import Data.Functor ((<&>))
 import Data.Map qualified as M
 import Data.Maybe (fromJust, fromMaybe, isJust)
 import Data.Set qualified as S
-import Data.List (nubBy)
+import Data.List (nubBy, isInfixOf)
 import Data.List.NonEmpty qualified as NE
-import Futhark.Analysis.Properties.AlgebraBridge (answerFromBool, orM, simplify, ($==))
+import Futhark.Analysis.Properties.AlgebraBridge (answerFromBool, orM, simplify, ($==), addRelShape, addRelSymbol)
 import Futhark.Analysis.Properties.Flatten (from1Dto2D, lookupII, from1Dto2DM, mkERow)
 import Futhark.Analysis.Properties.IndexFn
 import Futhark.Analysis.Properties.IndexFnPlus (domainEnd, intervalEnd, intervalStart, repCases, repDomain, repIndexFn)
@@ -239,23 +239,32 @@ substituteOnce f g_presub (f_apply, actual_args) = do
   vn <- newVName ("<" <> prettyString f_apply <> ">")
   g <- repApply vn g_presub
 
-  -- printM 3 $
-  --   "substituteOnce enter"
-  --     <> "\n  f_apply: " <> prettyStr f_apply
-  --     <> "\n  actual_args: " <> prettyStr actual_args
-  --     <> "\n  shape f: " <> prettyStr (shape f)
-  --     <> "\n  shape g_presub: " <> prettyStr (shape g_presub)
+  when shouldDebugSubst $
+    printM 3 $
+      "substituteOnce enter"
+        <> "\n  f_apply: " <> prettyStr f_apply
+        <> "\n  actual_args: " <> prettyStr actual_args
+        <> "\n  shape f: " <> prettyStr (shape f)
+        <> "\n  shape g_presub: " <> prettyStr (shape g_presub)
 
-  -- printM 3 $
-  --   "substituteOnce args shape info"
-  --     <> "\n  rank f: " <> prettyStr (rank f)
-  --     <> "\n  length actual_args: " <> prettyStr (length actual_args)
-  --     <> "\n  iterator count in shape f: " <> prettyStr (length (concat (shape f)))
+  when shouldDebugSubst $
+    printM 3 $
+      "substituteOnce args shape info"
+        <> "\n  rank f: " <> prettyStr (rank f)
+        <> "\n  length actual_args: " <> prettyStr (length actual_args)
+        <> "\n  iterator count in shape f: " <> prettyStr (length (concat (shape f)))
 
-  printM 3 $ "--- f ---" <> prettyStr (f)
-  printM 3 $ "--- g ---" <> prettyStr (g)
+  when shouldDebugSubst $
+    printM 3 $ "--- f ---" <> prettyStr (f)
+  when shouldDebugSubst $
+    printM 3 $ "--- g ---" <> prettyStr (g)
 
   args <- mkArgs
+
+  when shouldDebugSubst $
+    printM 3 $
+      "substituteOnce args replacement"
+        <> "\n  args: " <> prettyStr args
 
   let new_shape =
         shape g
@@ -280,9 +289,20 @@ substituteOnce f g_presub (f_apply, actual_args) = do
               pure (sop2Symbol (rep s p_g) :&& sop2Symbol (rep args p_f), rep s e_g)
           }
 
+  when shouldDebugSubst $
+    printM 3 $
+      "substituteOnce after building g_sub"
+        <> "\n  new_shape: " <> prettyStr new_shape
+        <> "\n  g_sub shape: " <> prettyStr (shape g_sub)
+        <> "\n  g_sub body: " <> prettyStr (body g_sub)
+
   mg1 <- applySubRules args g_sub
-  -- printM 3 "substituteOnce after applySubRules"
-  -- printM 3 $ "substituteOnce initial new_shape=" <> prettyStr new_shape
+
+  when shouldDebugSubst $
+    printM 3 $
+      "substituteOnce after applySubRules"
+        <> "\n  mg1 shape: " <> prettyStr (shape <$> mg1)
+      <> "\n  mg1 body: " <> prettyStr (body <$> mg1)
 
   mg2 <- case mg1 of
     Nothing ->
@@ -299,13 +319,25 @@ substituteOnce f g_presub (f_apply, actual_args) = do
   mg3 <- traverse simplify mg2
   -- printM 3 "substituteOnce after simplify"
 
-  let mg3' = cleanupIndexFn <$> mg3
+  mg3' <- traverse cleanupIndexFnM mg3
   
   pure mg3'
   where
-    cleanupIndexFn :: IndexFn -> IndexFn
-    cleanupIndexFn g0 =
-      g0 {body = cleanupCases (body g0)}
+    shouldDebugSubst :: Bool
+    shouldDebugSubst =
+      any (`isInfixOf` prettyString f_apply)
+        [ "indsT"
+        , "tmp"
+        , "lst"
+        , "seg_starts"
+        , "ends"
+        , "#f"
+        ]
+
+    cleanupIndexFnM :: IndexFn -> IndexFnM IndexFn
+    cleanupIndexFnM g0 = do
+      body_solved <- solveCasesUnderGuards (shape g0) (body g0)
+      pure g0 {body = cleanupCases body_solved}
 
     cleanupCases :: Cases Symbol (SoP Symbol) -> Cases Symbol (SoP Symbol)
     cleanupCases (Cases cs) =
@@ -327,6 +359,30 @@ substituteOnce f g_presub (f_apply, actual_args) = do
 
         sameBranch (p1, e1) (p2, e2) =
           p1 == p2 && e1 == e2
+
+    solveCasesUnderGuards :: [[Quantified Domain]] -> Cases Symbol (SoP Symbol) -> IndexFnM (Cases Symbol (SoP Symbol))
+    solveCasesUnderGuards shp (Cases cs) = do
+      cs' <- mapM solveOneCase (NE.toList cs)
+      pure $ Cases (NE.fromList cs')
+      where
+        solveOneCase (p, e)
+          | p == Bool False =
+              pure (p, e)
+          | otherwise =
+              rollbackAlgEnv $ do
+                -- add the array/domain iterators, for example:
+                -- i < m, j < shape[i]
+                addRelShape shp
+
+                -- this is the important part:
+                -- while simplifying this branch, assume its guard is true.
+                -- for example, in the second lst branch we know shape[i] /= 0.
+                when (p /= Bool True) $
+                  addRelSymbol p
+
+                e' <- solveIx shp e
+                pure (p, e')
+
     -- Construct replacement from formal arguments of f to actual arguments.
     mkArgs :: IndexFnM (Replacement Symbol)
     mkArgs =
@@ -353,7 +409,17 @@ substituteOnce f g_presub (f_apply, actual_args) = do
                     actual_args
 
           | rank f == length actual_args -> do
+              printM 3 $
+                "mkArgs rank-based branch"
+                  <> "\n  shape f: " <> prettyStr (shape f)
+                  <> "\n  actual_args: " <> prettyStr actual_args
+
               reps <- zipWithM mkArgM (shape f) actual_args
+
+              printM 3 $
+                "mkArgs rank-based result"
+                  <> "\n  reps: " <> prettyStr reps
+
               pure $ mconcat reps
 
           | otherwise ->

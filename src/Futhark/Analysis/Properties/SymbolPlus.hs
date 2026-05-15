@@ -133,6 +133,8 @@ repProperty s (BijectiveRCD x rcd img) =
   BijectiveRCD (repVName s x) (repTuple s rcd) (repTuple s img)
 repProperty s (FiltPartInv x pf pps) =
   FiltPartInv (repVName s x) (repPredicate s pf) (map (repPredicate s) pps)
+repProperty s (InvFiltPart x z pf pps) =
+  InvFiltPart (repVName s x) (repTuple s z) (repPredicate s pf) (map (repPredicate s) pps)
 repProperty s (FiltPart y x pf pps) =
   FiltPart (repVName s y) (repVName s x) (repPredicate s pf) (map (repPredicate s) pps)
 repProperty s (For x (Predicate i p)) =

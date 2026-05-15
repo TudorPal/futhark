@@ -51,7 +51,18 @@ let segment_ids [m]
 let part2indicesL 't [m][n]
       (shape: {[m]i64 | \x -> Range x (0, inf) })
       (csL: {[n]bool | \_ -> n == sum shape})
-      : {[n]i64 | \inds -> FiltPartInv inds (\_i -> true) (\i -> csL[i]) } =
+      : {[n]i64 | \inds ->
+          let seg_ends = scan (+) 0i64 shape
+          let seg_starts =
+            map (\k -> if k == 0i64 then 0i64 else seg_ends[k-1])
+                (iota (m + 1))
+          in For inds (\k ->
+            InvFiltPart inds
+              (seg_starts[k], seg_starts[k+1])
+              (\_i -> true)
+              (\i -> csL[i]))
+        } =
+      
   let (seg_ids, flags) = segment_ids shape
 
   -- v Size hints for the existing type-system.

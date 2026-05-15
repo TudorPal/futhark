@@ -746,16 +746,43 @@ forward expr@(E.AppExp (E.Apply e_f args loc) appres)
 
       forM (zip3 dests indss valss) $ \(dest, inds, vals) -> do
         safety <- scatterSafe dest (e_inds, inds) vals
+        printM 1 $
+          "scatter debug"
+            <> "\n  dest: " <> prettyStr dest
+            <> "\n  inds: " <> prettyStr inds
+            <> "\n  vals: " <> prettyStr vals
+            <> "\n  safety: " <> prettyStr safety
         f <- case safety of
           Unknown -> do
-            printM 10 "scatter: unable to show safety"
+            printM 1 "scatter: unable to show safety"
             pure Nothing
           Yes -> do
             printM 1 . locMsg (E.locOf expr) $ prettyStr expr <> greenString " SAFE"
-            runMaybeT $
-              scatterSc1 dest (e_inds, inds) vals
-                <|> scatterSc2 dest inds vals
-                <|> scatterSc3 dest
+
+            r1 <- runMaybeT $ scatterSc1 dest (e_inds, inds) vals
+            printM 1 $ "scatterSc1 result: " <> prettyStr (isJust r1)
+
+            r2 <- case r1 of
+              Just _ -> pure Nothing
+              Nothing -> runMaybeT $ scatterSc2 dest inds vals
+            printM 1 $ "scatterSc2 result: " <> prettyStr (isJust r2)
+
+            r3 <- case r1 <|> r2 of
+              Just _ -> pure Nothing
+              Nothing -> runMaybeT $ scatterSc3 dest
+            printM 1 $ "scatterSc3 result: " <> prettyStr (isJust r3)
+
+            pure $ r1 <|> r2 <|> r3
+        -- f <- case safety of
+        --   Unknown -> do
+        --     printM 10 "scatter: unable to show safety"
+        --     pure Nothing
+        --   Yes -> do
+        --     printM 1 . locMsg (E.locOf expr) $ prettyStr expr <> greenString " SAFE"
+        --     runMaybeT $
+        --       scatterSc1 dest (e_inds, inds) vals
+        --         <|> scatterSc2 dest inds vals
+        --         <|> scatterSc3 dest
         maybe
           (error $ errorMsg loc "Failed to infer index function for scatter.")
           pure
@@ -1301,15 +1328,41 @@ forwardPropertyPrelude f args =
             map (Property.Predicate i . sop2Symbol) parts_exprs
           )
 
+-- scatterSs1 :: IndexFn -> (E.Exp, IndexFn) -> IndexFnM Answer
+-- scatterSs1 (IndexFn ([Forall _ d_xs] : _) _) (e_is, is) = do
+--   dest_size <- rewrite $ domainEnd d_xs
+--   case justVName e_is of
+--     Just vn_is -> do
+--       prove (Property.Injective vn_is $ Just (int2SoP 0, dest_size))
+--         `orM` prove (Property.Injective vn_is Nothing)
+--     Nothing ->
+--       proveFn (PInjective $ Just (int2SoP 0, dest_size)) is
 scatterSs1 :: IndexFn -> (E.Exp, IndexFn) -> IndexFnM Answer
 scatterSs1 (IndexFn ([Forall _ d_xs] : _) _) (e_is, is) = do
   dest_size <- rewrite $ domainEnd d_xs
+  let rcd = (int2SoP 0, dest_size)
+
   case justVName e_is of
     Just vn_is -> do
-      prove (Property.Injective vn_is $ Just (int2SoP 0, dest_size))
+      props <- getProperties
+      printM 1 $
+        "scatterSs1 properties for indices:"
+          <> "\n  vn_is: " <> prettyStr vn_is
+          <> "\n  props: " <> prettyStr (M.lookup (Algebra.Var vn_is) props)
+
+      -- A bijection is enough for scatter safety, and this is also what
+      -- scatterSc1 needs later to construct the inverse index function.
+      prove (Property.BijectiveRCD vn_is rcd rcd)
+        `orM` prove (Property.Injective vn_is $ Just rcd)
         `orM` prove (Property.Injective vn_is Nothing)
-    Nothing ->
-      proveFn (PInjective $ Just (int2SoP 0, dest_size)) is
+
+    Nothing -> do
+      printM 1 $
+        "scatterSs1 unnamed indices"
+          <> "\n  rcd: " <> prettyStr rcd
+          <> "\n  is: " <> prettyStr is
+
+      proveFn (PInjective $ Just rcd) is
 scatterSs1 _ _ = pure Unknown
 
 scatterSs2 :: IndexFn -> Answer

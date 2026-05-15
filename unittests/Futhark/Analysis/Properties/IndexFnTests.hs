@@ -814,35 +814,76 @@ programTests =
                 }
             ]
         ),
-      mkTest
-        "tests/indexfn/part2indicesL.fut"
-        ( newNameFromString "csL" >>= \csL ->
-            newNameFromString "shape" >>= \shape ->
-              newNameFromString "j" >>= \j -> pure $ \(i, m, k, b) ->
-                let int = int2SoP
-                    csL_i = Apply (Hole csL) [sHole i]
-                    seg_k_start = sym2SoP $ Sum j (int 0) (sHole k .-. int 1) (Apply (Hole shape) [sHole j])
-                    seg_k_end = int (-1) .+. sym2SoP (Sum j (int 0) (sHole k) (Apply (Hole shape) [sHole j]))
-                 in [ IndexFn
-                        { shape = [[Forall i (Cat k (sHole m) (sHole b))]],
-                          body =
-                            cases
-                              [ ( csL_i,
-                                  -- offset at segment k
-                                  seg_k_start
-                                    -- number of trues in this segment up to and including current index
-                                    .+. sym2SoP (Sum j seg_k_start (sHole i .-. int 1) (Apply (Hole csL) [sHole j]))
-                                ),
-                                ( neg csL_i,
-                                  -- global index
-                                  sHole i
-                                    -- plus number of trues that come after this index in the current segment
-                                    .+. sym2SoP (Sum j (sHole i .+. int 1) seg_k_end (Apply (Hole csL) [sHole j]))
-                                )
-                              ]
-                        }
-                    ]
-        ),
+     mkTest
+      "tests/indexfn/part2indicesL.fut"
+      ( newNameFromString "csL" >>= \csL ->
+          newNameFromString "shape" >>= \shape ->
+            newNameFromString "j" >>= \j -> pure $ \(i, m, k, _b) ->
+              let int = int2SoP
+
+                  -- start of segment k in the flat array:
+                  -- sum shape[0..k-1]
+                  seg_k_start =
+                    sym2SoP $
+                      Sum j
+                        (int 0)
+                        (sHole k .-. int 1)
+                        (Apply (Hole shape) [sHole j])
+
+                  -- end of segment k in the flat array, inclusive:
+                  -- -1 + sum shape[0..k]
+                  seg_k_end =
+                    int (-1)
+                      .+. sym2SoP
+                        ( Sum j
+                            (int 0)
+                            (sHole k)
+                            (Apply (Hole shape) [sHole j])
+                        )
+
+                  -- local index i inside segment k, converted to the old flat index.
+                  flat_i =
+                    sHole i .+. seg_k_start
+
+                  csL_flat_i =
+                    Apply (Hole csL) [flat_i]
+
+                  shape_k =
+                    sym2SoP $ Apply (Hole shape) [sHole k]
+              in [ IndexFn
+                      { shape =
+                          [ [ Forall k (Iota (sHole m))
+                            , Forall i (Iota shape_k)
+                            ]
+                          ],
+                        body =
+                          cases
+                            [ ( csL_flat_i,
+                                -- offset at segment k
+                                seg_k_start
+                                  -- number of trues in this segment before the current local index
+                                  .+. sym2SoP
+                                    ( Sum j
+                                        seg_k_start
+                                        (flat_i .-. int 1)
+                                        (Apply (Hole csL) [sHole j])
+                                    )
+                              ),
+                              ( neg csL_flat_i,
+                                -- global flat index
+                                flat_i
+                                  -- plus number of trues after this index in the same segment
+                                  .+. sym2SoP
+                                    ( Sum j
+                                        (flat_i .+. int 1)
+                                        seg_k_end
+                                        (Apply (Hole csL) [sHole j])
+                                    )
+                              )
+                            ]
+                      }
+                  ]
+      ),
       mkTest
         "tests/indexfn/filter_indices.fut"
         ( newNameFromString "xs" >>= \xs ->
