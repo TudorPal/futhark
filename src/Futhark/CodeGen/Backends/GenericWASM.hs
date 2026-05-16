@@ -153,11 +153,14 @@ javascriptWrapper entryPoints opaqueTypes =
       classFutharkContext entryPoints opaqueTypes
     ]
 
+-- Make FutharkModule the generated primary class, but keeps FutharkContext around for backwards compatibility.
 classFutharkContext :: [JSEntryPoint] -> [(String, JSOpaqueType)] -> T.Text
 classFutharkContext entryPoints opaqueTypes =
   T.unlines
-    [ "class FutharkContext {",
-      constructor entryPoints opaqueTypes,
+    [ "class FutharkModule {",
+      moduleConstructor,
+      moduleInitFromWasm entryPoints opaqueTypes,
+      moduleInit,
       getFreeFun,
       getEntryPointsFun,
       getTypesFun,
@@ -166,10 +169,11 @@ classFutharkContext entryPoints opaqueTypes =
       T.unlines $ concatMap (generateProjectMethods . snd) opaqueTypes,
       T.unlines $ map jsWrapEntryPoint entryPoints,
       "}",
+      classFutharkContextCompat,
       [text|
-      async function newFutharkContext() {
+      async function newFutharkContext(num_threads) {
         var wasm = await loadWASM();
-        return new FutharkContext(wasm);
+        return new FutharkContext(wasm, num_threads);
       }
       |]
     ]
@@ -180,14 +184,28 @@ classFutharkContext entryPoints opaqueTypes =
     entryPointTypes = concatMap (\jse -> parameters jse ++ [ret jse]) entryPoints
     recordFieldTypes = [jsrfType rf | (_, JSOpaqueRecord fields) <- opaqueTypes, rf <- fields]
 
-constructor :: [JSEntryPoint] -> [(String, JSOpaqueType)] -> T.Text
-constructor jses opaqueTypes =
+moduleConstructor :: T.Text
+moduleConstructor =
   [text|
-  constructor(wasm, num_threads) {
+  constructor() {
+    this.wasm = undefined;
+    this.cfg = undefined;
+    this.ctx = undefined;
+    this.entry_points = {};
+    this.types = {};
+    this.entry = {};
+  }
+  |]
+
+moduleInitFromWasm :: [JSEntryPoint] -> [(String, JSOpaqueType)] -> T.Text
+moduleInitFromWasm jses opaqueTypes =
+  [text|
+  _init_from_wasm(wasm, num_threads) {
     this.wasm = wasm;
     this.cfg = this.wasm._futhark_context_config_new();
     if (num_threads) this.wasm._futhark_context_config_set_num_threads(this.cfg, num_threads);
     this.ctx = this.wasm._futhark_context_new(this.cfg);
+
     this.entry_points = {
       ${entries}
     };
@@ -211,12 +229,45 @@ constructor jses opaqueTypes =
     entryPointTypes = concatMap (\jse -> parameters jse ++ [ret jse]) jses
     recordFieldTypes = [jsrfType rf | (_, JSOpaqueRecord fields) <- opaqueTypes, rf <- fields]
 
+moduleInit :: T.Text
+moduleInit =
+  [text|
+  async init(wasm, num_threads) {
+    if (wasm === undefined) {
+      wasm = await loadWASM();
+    }
+
+    this._init_from_wasm(wasm, num_threads);
+  }
+  |]
+
+classFutharkContextCompat :: T.Text
+classFutharkContextCompat =
+  [text|
+  class FutharkContext extends FutharkModule {
+    constructor(wasm, num_threads) {
+      super();
+
+      if (wasm !== undefined) {
+        this._init_from_wasm(wasm, num_threads);
+      }
+    }
+  }
+  |]
+
 getFreeFun :: T.Text
 getFreeFun =
   [text|
   free() {
-    this.wasm._futhark_context_free(this.ctx);
-    this.wasm._futhark_context_config_free(this.cfg);
+    if (this.ctx !== undefined) {
+      this.wasm._futhark_context_free(this.ctx);
+      this.ctx = undefined;
+    }
+
+    if (this.cfg !== undefined) {
+      this.wasm._futhark_context_config_free(this.cfg);
+      this.cfg = undefined;
+    }
   }
   |]
 
@@ -517,4 +568,4 @@ runServer =
 
 -- | The names exported by the generated module.
 libraryExports :: T.Text
-libraryExports = "export {newFutharkContext, FutharkContext, FutharkArray, FutharkOpaque};"
+libraryExports = "export {newFutharkContext, FutharkContext, FutharkModule, FutharkArray, FutharkOpaque};"

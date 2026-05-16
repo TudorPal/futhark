@@ -20,8 +20,8 @@ run: check-test
 inc:
 	$(MAKE) run TEST=inc
 
-array_api:
-	$(MAKE) run TEST=array_api
+array:
+	$(MAKE) run TEST=array
 
 check-test:
 	@if [ -z "$(TEST)" ]; then \
