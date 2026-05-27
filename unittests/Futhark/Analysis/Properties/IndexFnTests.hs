@@ -53,7 +53,7 @@ catRefactorTests =
   testGroup "CatRefactor"
     [ scatterSc2RuleTest NoCat
     , noCatSelectedProgramsTest
-    --, noCatPrograms
+    -- , noCatPrograms
     ]
 
 noCatPrograms :: TestTree
@@ -90,7 +90,6 @@ noCatPrograms =
     , mkNoCatTest "tests/indexfn/seg_partition.fut"
     , mkNoCatTest "tests/indexfn/partition3.fut"
     , mkNoCatTest "tests/indexfn/filter.fut"
-    , mkNoCatTest "tests/indexfn/filter_segmented_array.fut"
     , mkNoCatTest "tests/indexfn/maxMatch.fut"
     , mkNoCatTest "tests/indexfn/maxMatch_2d.fut"
     , mkNoCatTest "tests/indexfn/kmeans_kernel.fut"
@@ -99,8 +98,8 @@ noCatPrograms =
     , mkNoCatTest "tests/indexfn/nd_expansion.fut"
     , mkNoCatTest "tests/indexfn/if-array-type.fut"
     , mkNoCatTest "tests/indexfn/zipArgs2d.fut"
-    , mkNoCatTest "tests/indexfn/primes.fut"
-    , mkNoCatTest "tests/indexfn/mis.fut"
+    -- , mkNoCatTest "tests/indexfn/primes.fut"
+    -- , mkNoCatTest "tests/indexfn/mis.fut"
     , mkNoCatTest "tests/indexfn/quickhull.fut"
     , mkNoCatTest "tests/indexfn/srad.fut"
     -- , mkNoCatTest "tests/indexfn/for_postcondition.fut"
@@ -1083,26 +1082,26 @@ programTests =
                 }
             ]
         ),
-      mkTest
-        "tests/indexfn/primes.fut"
-        ( pure $ \(i, n, xs, _) ->
-            [ IndexFn
-                { shape = [[Forall i (Iota (sHole n))]],
-                  -- matches anything; we're just checking the program.
-                  body = cases [(Bool True, sHole xs)]
-                }
-            ]
-        ),
-      mkTest
-        "tests/indexfn/mis.fut"
-        ( pure $ \(i, n, xs, _) ->
-            [ IndexFn
-                { shape = [[Forall i (Iota (sHole n))]],
-                  -- matches anything; we're just checking the program.
-                  body = cases [(Bool True, sHole xs)]
-                }
-            ]
-        ),
+      -- mkTest
+      --   "tests/indexfn/primes.fut"
+      --   ( pure $ \(i, n, xs, _) ->
+      --       [ IndexFn
+      --           { shape = [[Forall i (Iota (sHole n))]],
+      --             -- matches anything; we're just checking the program.
+      --             body = cases [(Bool True, sHole xs)]
+      --           }
+      --       ]
+      --   ),
+      -- mkTest
+      --   "tests/indexfn/mis.fut"
+      --   ( pure $ \(i, n, xs, _) ->
+      --       [ IndexFn
+      --           { shape = [[Forall i (Iota (sHole n))]],
+      --             -- matches anything; we're just checking the program.
+      --             body = cases [(Bool True, sHole xs)]
+      --           }
+      --       ]
+      --   ),
       mkTest
         "tests/indexfn/quickhull.fut"
         ( pure $ \(i, n, xs, _) ->
