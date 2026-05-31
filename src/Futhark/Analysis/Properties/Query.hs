@@ -933,37 +933,6 @@ prove_ baggage (PInvFiltPart (za, zb) pf pps') f@(IndexFn [[Forall i dom]] _) = 
   -- Z is source-style half-open, so convert to inclusive range for PBijectiveRCD.
   let img = (za, zb .-. int2SoP 1)
   step1 <- prove_ baggage (PBijectiveRCD img img) f
-  
-  -- -- step 1 shouldnt go through the generic PInjective.
-  -- -- For the flattened row-local case, a better proof is:
-  -- -- let m_true be the number of true values in the row
-  -- -- split the row interval Z into true part [za, za + m_true)
-  -- -- and false part [za + m_true, zb)]
-  -- -- We can then prove the true branch is bijective onto the true part
-  -- -- and the false branch is bijective onto the false part.
-
-  -- step1 <-
-  --   case (guards f, pps') of
-  --     ([g_true, g_false], [pp_true]) -> rollbackAlgEnv $ do
-  --       addRelShape (shape f)
-
-  --       -- number of values in the first partition inside this row
-  --       m_true <- inferFiltPartInvSize pp_true dom
-
-  --       let z_mid = za .+. m_true
-  --       let img_true  = (za, z_mid .-. int2SoP 1)
-  --       let img_false = (z_mid, zb .-. int2SoP 1)
-
-  --       let f_true  = IndexFn [[Forall i dom]] (cases [g_true])
-  --       let f_false = IndexFn [[Forall i dom]] (cases [g_false])
-
-  --       proveBijectiveMaybeEmpty img_true f_true
-  --         `andM`
-  --         proveBijectiveMaybeEmpty img_false f_false
-
-  --     _ ->
-  --       prove_ baggage (PBijectiveRCD img img) f
-
 
   -- Filtered-away indices must map outside Z.
   let step2 = rollbackAlgEnv $ do
@@ -1015,14 +984,6 @@ prove_ baggage (PInvFiltPart (za, zb) pf pps') f@(IndexFn [[Forall i dom]] _) = 
   pure step1 `andM` step2 `andM` step3 `andM` step4
   where
     fn @ idx = rep (mkRep i (Var idx)) fn
-
-    proveBijectiveMaybeEmpty (lo, hi) g = do
-      nonempty <- lo $<= hi
-      empty <- lo $> hi
-      case (nonempty, empty) of
-        (Yes, _) -> prove_ baggage (PBijectiveRCD (lo, hi) (lo, hi)) g
-        (_, Yes) -> pure Yes
-        _ -> prove_ baggage (PBijectiveRCD (lo, hi) (lo, hi)) g
 prove_ baggage (PFiltPartInv pf pps') f@(IndexFn [[Forall i dom]] _) = algebraContext f $ do
   let p_otherwise x = foldl1 (:&&) [neg (pp x) | pp <- pps']
   let pps = pps' <> [p_otherwise]
